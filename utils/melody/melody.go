@@ -8,6 +8,15 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+/*
+WebSocket接続を管理するためのライブラリ「Melody」の一部です。
+Melodyは、WebSocketサーバー側の管理を容易にし、接続の管理、メッセージの送受信、接続の開始・終了などをハンドリングするための機能を提供します。
+このコードでは、Melodyの主要な機能である、接続の処理、メッセージのブロードキャスト、エラーハンドリングなどが実装されています。
+*/
+
+//WebSocketのクローズコード: RFC 6455で定義されたWebSocket接続の終了コードを定義しています。これにより、接続の終了理由を識別できます。
+//例えば、CloseNormalClosureは通常の接続終了を意味し、
+//CloseProtocolErrorはプロトコルエラーを意味します。
 // Close codes defined in RFC 6455, section 11.7.
 // Duplicate of codes from gorilla/websocket for convenience.
 const (
@@ -53,6 +62,14 @@ type handleCloseFunc func(*Session, int, string) error
 type handleSessionFunc func(*Session)
 type filterFunc func(*Session) bool
 
+// サーバー側でセッションの管理をする
+/*
+Melody: WebSocket接続を管理する中心的な構造体です。この構造体を通して、クライアントとの接続、メッセージのやり取り、エラーハンドリングを行います。
+Config: Melodyの設定を保持する構造体です（別途定義）。
+Upgrader: HTTPリクエストをWebSocketにアップグレードするためのgorilla/websocketライブラリの構造体です。
+messageHandlerなど: メッセージが受信されたときや送信されたときのハンドラ関数です。これらのハンドラは必要に応じてカスタマイズ可能です。
+hub: 接続の管理を行うhubという内部的な構造体で、セッションの登録・削除、メッセージのブロードキャストなどを担当します。
+*/
 // Melody implements a websocket manager.
 type Melody struct {
 	Config                   *Config
@@ -69,6 +86,12 @@ type Melody struct {
 	hub                      *hub
 }
 
+/*
+New: Melodyのインスタンスを生成します。
+Upgrader: HTTP接続をWebSocketにアップグレードするための設定を行います。この例では、全てのリクエストを許可するCheckOriginが設定されています。
+hub: Hubはセッションの管理を担当し、hub.run()でバックグラウンドで動作を開始します。
+**messageHandler**などのデフォルト値として、受け取ったメッセージやエラーなどを処理する空の関数が設定されています。
+*/
 // New creates a new melody instance with default Upgrader and Config.
 func New() *Melody {
 	upgrader := &websocket.Upgrader{
@@ -96,6 +119,9 @@ func New() *Melody {
 		hub:                      hub,
 	}
 }
+
+//HandleMessage: 文字列メッセージを受信したときに呼ばれるハンドラを設定します。例えば、WebSocket経由でテキストメッセージが送信されると、この関数で指定されたハンドラが呼び出されます。
+// 同様に、バイナリメッセージや接続の開始・終了時のハンドラも同じ方法で設定できます（HandleMessageBinary、HandleConnectなど）。
 
 // EnableCompress sets whether to compress data. Should negotiate with peer.
 func (m *Melody) EnableCompress(enabled bool) {
@@ -161,6 +187,13 @@ func (m *Melody) HandleClose(fn func(*Session, int, string) error) {
 	}
 }
 
+/*
+HandleRequest: HTTPリクエストをWebSocketにアップグレードし、セッションを作成して管理します。
+まず、Upgraderを使ってWebSocket接続にアップグレードし、エラーがなければセッションを作成します。
+セッションはHubに登録され、接続ハンドラが呼び出されます。
+writePumpとreadPumpを使ってメッセージの送受信を処理します。
+接続が終了すると、Hubからセッションを削除し、クリーンアップ処理を行います。
+*/
 // HandleRequest upgrades http requests to websocket connections and dispatches them to be handled by the melody instance.
 func (m *Melody) HandleRequest(w http.ResponseWriter, r *http.Request) error {
 	return m.HandleRequestWithKeys(w, r, nil)
@@ -172,6 +205,7 @@ func (m *Melody) HandleRequestWithKeys(w http.ResponseWriter, r *http.Request, k
 		return errors.New("melody instance is closed")
 	}
 
+	// sebsocketをアップグレード
 	conn, err := m.Upgrader.Upgrade(w, r, w.Header())
 
 	if err != nil {
@@ -197,6 +231,7 @@ func (m *Melody) HandleRequestWithKeys(w http.ResponseWriter, r *http.Request, k
 
 	session.readPump()
 
+	// sessionのクリーンアップ
 	if !m.hub.closed() {
 		m.hub.unregister <- session
 	}
@@ -210,6 +245,10 @@ func (m *Melody) HandleRequestWithKeys(w http.ResponseWriter, r *http.Request, k
 	return nil
 }
 
+/*
+Broadcast: すべての接続中のセッションに対して、テキストメッセージを送信します。内部的にはenvelopeという構造体を使用してメッセージをラップし、Hubのキューに送信します。
+BroadcastFilter: 条件を満たすセッションにのみメッセージを送信するフィルター付きブロードキャストも可能です。
+*/
 // Broadcast broadcasts a text message to all sessions.
 func (m *Melody) Broadcast(msg []byte) error {
 	if m.hub.closed() {
@@ -234,6 +273,7 @@ func (m *Melody) BroadcastFilter(msg []byte, fn func(*Session) bool) error {
 	return nil
 }
 
+// session s以外のすべてのセッションにバイナリメッセージをブロードキャストします。
 // BroadcastOthers broadcasts a text message to all sessions except session s.
 func (m *Melody) BroadcastOthers(msg []byte, s *Session) error {
 	return m.BroadcastFilter(msg, func(q *Session) bool {
@@ -241,6 +281,7 @@ func (m *Melody) BroadcastOthers(msg []byte, s *Session) error {
 	})
 }
 
+// 複数のセッションにテキストメッセージをブロードキャストします。
 // BroadcastMultiple broadcasts a text message to multiple sessions given in the sessions slice.
 func (m *Melody) BroadcastMultiple(msg []byte, sessions []*Session) error {
 	for _, sess := range sessions {
@@ -282,11 +323,13 @@ func (m *Melody) BroadcastBinaryOthers(msg []byte, s *Session) error {
 	})
 }
 
+// uuid に対してバイナリメッセージを送信します。
 // SendToConn sends a binary message to the session with specified uuid.
 func (m *Melody) SendToConn(msg []byte, uuid string) error {
 	return m.SendMultiple(msg, []string{uuid})
 }
 
+// uuidlist に対してバイナリメッセージを送信します。
 // SendMultiple sends a binary message to the sessions with these specified uuid.
 func (m *Melody) SendMultiple(msg []byte, list []string) error {
 	if m.hub.closed() {
@@ -299,11 +342,13 @@ func (m *Melody) SendMultiple(msg []byte, list []string) error {
 	return nil
 }
 
+// uuidのsessionを取得します。
 // GetSessionByUUID returns the session with specified uuid.
 func (m *Melody) GetSessionByUUID(uuid string) (*Session, bool) {
 	return m.hub.sessions.Get(uuid)
 }
 
+//?
 // IterSessions iterates all sessions.
 func (m *Melody) IterSessions(fn func(uuid string, s *Session) bool) {
 	var invalid []string
@@ -313,6 +358,7 @@ func (m *Melody) IterSessions(fn func(uuid string, s *Session) bool) {
 	m.hub.sessions.Remove(invalid...)
 }
 
+//Close: Melodyインスタンスをクローズし、すべての接続を終了します。クローズメッセージをすべてのセッションに送信し、セッションをクリーンアップします。
 // Close closes the melody instance and all connected sessions.
 func (m *Melody) Close() error {
 	if m.hub.closed() {

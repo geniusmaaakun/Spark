@@ -9,7 +9,21 @@ import (
 	ws "github.com/gorilla/websocket"
 )
 
+/*
+このコードは、WebSocketベースの通信を扱うためのセッション管理を実装しています。WebSocket通信を処理するために、gorilla/websocketライブラリを利用しており、Sessionという構造体を通じて、各クライアントとの接続状態やデータ送受信を管理しています。このコードは、クライアントとサーバー間の非同期通信における接続管理を容易にするものです。
+*/
+
 // Session wrapper around websocket connections.
+/*
+Request: WebSocket接続が作成された際のHTTPリクエストを保持します。
+Keys: セッション専用のデータストアで、任意のキーと値のペアを格納できます。
+UUID: セッション固有の識別子（UUID）を保持します。
+conn: WebSocket接続を表すgorilla/websocketライブラリのWebSocket接続オブジェクトです。
+output: 非同期でメッセージを送信するためのチャネルです。
+melody: セッションが属するMelody（WebSocket管理の上位構造体）を参照しています。
+open: セッションが開かれているか（有効な接続か）を示すフラグです。
+rwmutex: 読み書き時の排他制御を行うためのロック機構です。
+*/
 type Session struct {
 	Request *http.Request
 	Keys    map[string]interface{}
@@ -21,24 +35,30 @@ type Session struct {
 	rwmutex *sync.RWMutex
 }
 
+//writeMessage: メッセージをセッションに非同期で書き込みます。outputチャネルにメッセージを送信することで、非同期のメッセージ送信を行います。
 func (s *Session) writeMessage(message *envelope) {
+	//closed(): セッションが閉じているかを確認し、閉じていればエラーハンドラーを呼び出します。
 	if s.closed() {
 		s.melody.errorHandler(s, errors.New("tried to write to closed a session"))
 		return
 	}
 
+	//**select**文で、outputチャネルがブロックされていないか確認し、ブロックされていない場合のみメッセージを送信します。バッファがいっぱいの場合はエラーになります。
 	select {
 	case s.output <- message:
+		// ブロックされていたらエラー
 	default:
 		s.melody.errorHandler(s, errors.New("session message buffer is full"))
 	}
 }
 
+//writeRaw: WebSocketのconnを使って、指定されたメッセージを直接書き込みます。
 func (s *Session) writeRaw(message *envelope) error {
 	if s.closed() {
 		return errors.New("tried to write to a closed session")
 	}
 
+	//SetWriteDeadlineで書き込み操作にタイムアウトを設定し、WriteMessageを呼んでWebSocket経由でメッセージを送信します。
 	s.conn.SetWriteDeadline(time.Now().Add(s.melody.Config.WriteWait))
 	err := s.conn.WriteMessage(message.t, message.msg)
 
@@ -49,6 +69,7 @@ func (s *Session) writeRaw(message *envelope) error {
 	return nil
 }
 
+//closed: セッションが閉じられているかを確認します。rwmutexで排他制御し、スレッドセーフにopenの状態をチェックします。
 func (s *Session) closed() bool {
 	s.rwmutex.RLock()
 	defer s.rwmutex.RUnlock()
@@ -56,6 +77,7 @@ func (s *Session) closed() bool {
 	return !s.open
 }
 
+//close: セッションがまだ開いていれば、セッションを閉じます。WebSocket接続を閉じ、outputチャネルもクローズしてリソースを解放します。
 func (s *Session) close() {
 	if !s.closed() {
 		s.rwmutex.Lock()
@@ -66,6 +88,7 @@ func (s *Session) close() {
 	}
 }
 
+//ping: WebSocket接続にPingメッセージを送信します。これにより、接続の状態を確認し、タイムアウトが発生しないように維持します。
 func (s *Session) ping() {
 	s.writeRaw(&envelope{t: ws.PingMessage, msg: []byte{}})
 }
@@ -74,6 +97,9 @@ func (s *Session) writePump() {
 	ticker := time.NewTicker(s.melody.Config.PingPeriod)
 	defer ticker.Stop()
 
+	//writePump: メッセージを処理するループです。
+	//セッションのoutputチャネルからメッセージを受け取り、それをWebSocket接続に送信します。
+	//また、定期的にpingメッセージを送信します。ws.CloseMessageやエラーが発生した場合はループを終了します。
 loop:
 	for {
 		select {
@@ -106,6 +132,8 @@ loop:
 	}
 }
 
+//readPump: クライアントからのメッセージを受信し、適切なハンドラーに処理を渡すループです。
+//読み込みサイズの制限やタイムアウトを設定し、Pongメッセージが来た際のハンドラーや、接続が閉じられたときの処理も設定しています。
 func (s *Session) readPump() {
 	s.conn.SetReadLimit(s.melody.Config.MaxMessageSize)
 	s.conn.SetReadDeadline(time.Now().Add(s.melody.Config.PongWait))
@@ -140,6 +168,7 @@ func (s *Session) readPump() {
 	}
 }
 
+//Write: テキストメッセージを書き込む関数です。非同期でメッセージを送信します。
 // Write writes message to session.
 func (s *Session) Write(msg []byte) error {
 	if s.closed() {
@@ -151,6 +180,7 @@ func (s *Session) Write(msg []byte) error {
 	return nil
 }
 
+//WriteBinary: バイナリメッセージを書き込む関数です。
 // WriteBinary writes a binary message to session.
 func (s *Session) WriteBinary(msg []byte) error {
 	if s.closed() {
@@ -162,6 +192,7 @@ func (s *Session) WriteBinary(msg []byte) error {
 	return nil
 }
 
+//Close: セッションを閉じる関数です。クローズメッセージを送信してセッションを終了します。
 // Close closes session.
 func (s *Session) Close() error {
 	if s.closed() {
@@ -184,6 +215,8 @@ func (s *Session) CloseWithMsg(msg []byte) error {
 
 	return nil
 }
+
+//Set, Get, MustGet: セッション内にデータを保存・取得する関数です。セッション固有のデータを格納・取得するのに使用します。
 
 // Set is used to store a new key/value pair exclusively for this session.
 func (s *Session) Set(key string, value interface{}) bool {
