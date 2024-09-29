@@ -7,10 +7,24 @@ import (
 	"Spark/utils"
 	"Spark/utils/melody"
 	"encoding/hex"
-	"github.com/gin-gonic/gin"
 	"net/http"
+
+	"github.com/gin-gonic/gin"
 )
 
+/*
+デスクトップリモートセッションを管理するためのWebSocketベースのサーバー機能を提供しています。
+GinとMelodyライブラリを使って、ブラウザやリモートデバイス間でのデスクトップリモートセッションの作成、メッセージのやり取り、セッションの終了などを管理します。
+
+
+デスクトップのリモートセッションを管理するためのWebSocketベースのサーバー機能です。デスクトップセッションは、クライアント（ブラウザ）とリモートデバイス間でのやり取りを管理します。データの送受信、セッションの管理、セッション終了時のクリーンアップが行われます。
+*/
+
+/*
+desktop構造体: デスクトップセッションを管理するための構造体です。リモートデスクトップセッションのUUID、関連するデバイスのID、ブラウザセッション(srcConn)、デバイスセッション(deviceConn)を保持します。
+
+desktopSessions: Melodyを使ってWebSocketセッションを管理するオブジェクトです。クライアントやデバイス間の通信を管理し、接続やメッセージ送信時のイベントハンドリングを行います。
+*/
 type desktop struct {
 	uuid       string
 	device     string
@@ -29,6 +43,12 @@ func init() {
 	go utility.WSHealthCheck(desktopSessions, sendPack)
 }
 
+/*
+InitDesktop: クライアントがWebSocket接続を開始するためのエンドポイント。クエリパラメータとしてsecretとdeviceを受け取り、WebSocketハンドシェイクを行います。
+WebSocketでないリクエストは400 Bad Requestを返して拒否します。
+クエリパラメータsecretの長さが32バイトでなければエラーを返します。
+deviceが有効なデバイスIDでなければセッションを開始せずに終了します。
+*/
 // InitDesktop handles desktop websocket handshake event
 func InitDesktop(ctx *gin.Context) {
 	if !ctx.IsWebsocket() {
@@ -62,6 +82,12 @@ func InitDesktop(ctx *gin.Context) {
 	})
 }
 
+/*
+desktopEventWrapper: デバイスからブラウザに対して送信されるパケットの処理を行う関数をラップするためのコールバック関数です。
+イベントRAW_DATA_ARRIVEなど、デバイスから送られてきた生データに応じて、データをブラウザに送信するかどうかを決定します。
+DESKTOP_INIT: セッション初期化が成功したか失敗したかを確認し、失敗した場合はエラーメッセージをブラウザに送信します。
+DESKTOP_QUIT: セッションが終了した際に、ブラウザに終了メッセージを送信します。
+*/
 // desktopEventWrapper returns a eventCallback function that will
 // be called when device need to send a packet to browser
 func desktopEventWrapper(desktop *desktop) common.EventCallback {
@@ -118,6 +144,11 @@ func desktopEventWrapper(desktop *desktop) common.EventCallback {
 	}
 }
 
+/*
+**onDesktopConnect**は、新しいデスクトップセッションが接続された際に呼ばれるハンドラーです。
+WebSocket接続時にDeviceが取得できなければ、セッションを閉じてエラーメッセージを送信します。
+desktopインスタンスを作成し、セッションに関連付けます。これにより、デスクトップセッションが初期化され、通信が可能になります。
+*/
 func onDesktopConnect(session *melody.Session) {
 	device, ok := session.Get(`Device`)
 	if !ok {
@@ -154,6 +185,11 @@ func onDesktopConnect(session *melody.Session) {
 	})
 }
 
+/*
+**onDesktopMessage**は、デスクトップセッションからのメッセージを処理します。
+バイナリパケットの検証: パケットが有効であるかを確認します。無効な場合はセッションを閉じてエラーを返します。
+メッセージ内容に応じた処理: 受け取ったパケットのActに応じて、DESKTOP_PINGやDESKTOP_KILL、DESKTOP_SHOTなどの操作を行います。
+*/
 func onDesktopMessage(session *melody.Session, data []byte) {
 	var pack modules.Packet
 	val, ok := session.Get(`Desktop`)
@@ -205,6 +241,10 @@ func onDesktopMessage(session *melody.Session, data []byte) {
 	session.Close()
 }
 
+/*
+**onDesktopDisconnect**は、デスクトップセッションが切断された際に呼ばれます。
+セッション切断時に、デバイスにセッションが終了したことを通知し、イベントやセッション情報をクリアします。
+*/
 func onDesktopDisconnect(session *melody.Session) {
 	common.Info(session, `DESKTOP_CLOSE`, `success`, ``, nil)
 	val, ok := session.Get(`Desktop`)
@@ -223,6 +263,24 @@ func onDesktopDisconnect(session *melody.Session) {
 	desktop = nil
 }
 
+//sendPack: 任意のパケットをWebSocketセッションに送信する関数で、データをシリアライズして暗号化し、バイナリデータとして送信します。
+/*
+機能説明:
+目的: この関数は、modules.Packet（パケット）を特定のWebSocketセッションにバイナリデータとして送信します。
+引数:
+pack: 送信するデータ（パケット）。JSON形式で送信するため、まずシリアライズ（マーシャリング）されます。
+session: データを送信する対象のWebSocketセッション（*melody.Session型）。
+処理の流れ:
+セッションの存在確認: セッションがnilでないか確認します。nilの場合はfalseを返して終了します。
+パケットのシリアライズ: パケットをutils.JSON.Marshalを使ってJSON形式に変換します。シリアライズに失敗した場合もfalseを返します。
+データの暗号化: utility.SimpleEncryptを使って、シリアライズされたデータを暗号化します。この暗号化は、セッション情報に基づいて行われます。
+データの送信:
+暗号化されたデータに特定のバイト列（34, 22, 19, 17, 20, 03）を先頭に付与し、session.WriteBinaryを使ってセッションにバイナリデータとして送信します。
+エラーが発生した場合はfalse、成功した場合はtrueを返します。
+特徴:
+バイナリデータ送信時に、先頭に特定の6バイトのプレフィックス（34, 22, 19, 17, 20, 03）を付与しています。これはおそらく通信のプロトコルを識別するためのものです。
+暗号化されたデータを送信するため、通信の安全性が考慮されています。
+*/
 func sendPack(pack modules.Packet, session *melody.Session) bool {
 	if session == nil {
 		return false
@@ -236,6 +294,28 @@ func sendPack(pack modules.Packet, session *melody.Session) bool {
 	return err == nil
 }
 
+//CloseSessionsByDevice: 特定のデバイスIDに関連するすべてのWebSocketセッションを終了させるための関数で、各セッションに終了通知を送信してからセッションを閉じます。
+/*
+機能説明:
+目的: 特定のdeviceIDに関連するすべてのデスクトップセッションを閉じるための関数です。
+引数:
+deviceID: 対象とするデバイスのID。
+処理の流れ:
+セッションのイテレーション:
+
+desktopSessions.IterSessionsを使って、すべてのデスクトップセッションを繰り返し処理します。
+それぞれのセッションについて、session.Get("Desktop")でDesktopというキーに関連する値を取得し、その値が存在し、かつ正しい型（*desktop型）であるか確認します。
+デバイスIDの一致確認:
+
+desktop.deviceが引数として渡されたdeviceIDと一致するか確認します。
+一致する場合、そのセッションにQUITメッセージ（セッション終了の通知）を送信し、セッションを閉じるためのリストに追加します。
+セッションのクローズ:
+
+すべての対象セッションに対して、session.Close()を呼び出し、セッションを閉じます。
+特徴:
+デバイスに関連するセッションを安全にクローズします。セッションをただ閉じるだけでなく、まずそのセッションに終了通知（QUIT）を送信してから閉じます。
+クライアントに対して終了通知を送ることで、ユーザにセッションの終了を知らせることができます。
+*/
 func CloseSessionsByDevice(deviceID string) {
 	var queue []*melody.Session
 	desktopSessions.IterSessions(func(_ string, session *melody.Session) bool {
