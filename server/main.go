@@ -14,7 +14,6 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
-	"github.com/rakyll/statik/fs"
 	"io"
 	"net"
 	"os"
@@ -24,6 +23,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/rakyll/statik/fs"
+
 	_ "Spark/server/embed/web"
 	"Spark/utils"
 	"Spark/utils/melody"
@@ -32,9 +33,48 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+/*
+Goの Ginフレームワーク を使用して構築された Webサーバー です。
+このサーバーは、クライアントとの WebSocket 通信を管理し、リモートデバイスからのメッセージやコマンドを処理するためのAPIエンドポイントを提供します。
+また、ユーザー認証やセキュリティ対策、ファイルのキャッシュ管理も行っています。
+
+
+このコードは、クライアントとの リアルタイム通信 を確立し、メッセージやファイルの転送、デバイス管理などを行うサーバーの構築方法を示しています。主な機能は以下のとおりです：
+
+WebSocket接続のハンドリング: クライアントとのリアルタイム通信。
+ファイルキャッシュの管理: 静的ファイルを効率的に配信するためのキャッシュ制御。
+認証の管理: 認証が必要なAPIエンドポイントへのアクセス制御。
+デバイス管理: リモートデバイスからのコマンドの受信・処理。
+
+
+
+リアルタイム通信をサポートし、リモートデバイス管理に必要な各種機能を提供します。WebSocketを使用してクライアントからのバイナリデータやコマンドを処理し、認証やキャッシュ管理、デバイスのPing応答の監視なども行います。
+*/
+
+/*
+の blocked マップは、キーとして文字列（通常はIPアドレス）、値として int64 型のデータを保持するデータ構造です。
+
+具体的な用途
+この blocked 変数は、IPアドレスなどの特定のキーに対して、そのアドレスが 一時的にブロックされているかどうか を管理するために使用されます。ここでの int64 は、そのアドレスがブロックされている期間の終了時刻を示しており、ブロックが解除されるまでの残り時間を管理します。
+
+使用例
+この blocked マップを使って、リクエストを送信したクライアントのIPアドレスが過剰なリクエストを送信していないかを確認し、必要に応じて一定時間ブロックします。ブロックされたクライアントのIPアドレスとそのブロックが解除される時刻（int64 型のUNIXタイムスタンプ）を保存します。
+
+例えば：
+あるクライアントが多くの失敗した認証試行を行うと、そのクライアントのIPアドレスが blocked に追加され、一定期間そのクライアントからのリクエストがブロックされます。
+blocked に保存されている値を定期的にチェックし、ブロック解除のタイミングが来たらそのエントリを削除します。
+*/
 var blocked = cmap.New[int64]()
 var lastRequest = time.Now().Unix()
 
+/*
+説明: サーバーのエントリーポイントです。以下の手順でサーバーをセットアップしています。
+静的リソースの読み込み (webFS): サーバーが提供するWebコンテンツ（HTML/CSS/JSファイルなど）を読み込みます。
+ルーティングの初期化 (handler.InitRouter): /api パスの下にあるAPIエンドポイントを初期化し、クライアントとのWebSocket接続のための /ws エンドポイントも設定します。
+WebSocketのハンドリング (wsOnConnect, wsOnMessage, wsOnMessageBinary, wsOnDisconnect): WebSocket接続のイベントを処理します。
+HTTPサーバーの起動 (srv.ListenAndServe): 指定されたポートでHTTPサーバーを起動します。
+シグナル処理: SIGINTやSIGTERMシグナルをキャッチし、サーバーを安全にシャットダウンします。
+*/
 func main() {
 	webFS, err := fs.NewWithNamespace(`web`)
 	if err != nil {
@@ -98,6 +138,10 @@ func main() {
 	common.CloseLog()
 }
 
+/*
+説明: WebSocket接続のハンドシェイクを処理します。認証情報（UUIDとKey）をチェックし、クライアントからのWebSocket接続を初期化します。
+クライアントがWebSocketではなく通常のHTTPリクエストを使用した場合は、そのリクエストに対して応答します（例: 大きすぎるメッセージの場合）。
+*/
 func wsHandshake(ctx *gin.Context) {
 	if !ctx.IsWebsocket() {
 		// When message is too large to transport via websocket,
@@ -146,14 +190,25 @@ func wsHandshake(ctx *gin.Context) {
 	}
 }
 
+/*
+説明: クライアントがWebSocketに接続した際の処理を行います。デバイスにPingメッセージを送信します。
+*/
 func wsOnConnect(session *melody.Session) {
 	pingDevice(session)
 }
 
+/*
+説明: テキストメッセージを受信したときの処理を行います。ここでは特定の処理は行わず、クライアントを切断します。
+*/
 func wsOnMessage(session *melody.Session, _ []byte) {
 	session.Close()
 }
 
+/*
+説明: バイナリデータのメッセージを受信したときの処理を行います。
+データの解析: 受信したバイナリデータを解析し、特定のサービス（例: 20 や 21）に基づいて適切なイベントを呼び出します。
+パケットの復号と解析: AES暗号化されたデータを復号し、パケットが有効かどうかを確認します。
+*/
 func wsOnMessageBinary(session *melody.Session, data []byte) {
 	var pack modules.Packet
 
@@ -211,6 +266,9 @@ func wsOnMessageBinary(session *melody.Session, data []byte) {
 	session.Set(`LastPack`, utils.Unix)
 }
 
+/*
+説明: クライアントがWebSocketから切断された際の処理を行います。デバイス情報を削除し、ターミナルやデスクトップセッションを閉じます。
+*/
 func wsOnDisconnect(session *melody.Session) {
 	if device, ok := common.Devices.Get(session.UUID); ok {
 		terminal.CloseSessionsByDevice(device.ID)
@@ -231,6 +289,7 @@ func wsOnDisconnect(session *melody.Session) {
 	common.Devices.Remove(session.UUID)
 }
 
+//説明: 一定間隔でクライアントにPingメッセージを送信し、応答がないクライアントを切断します。
 func wsHealthCheck(container *melody.Melody) {
 	const MaxIdleSeconds = 150
 	const MaxPingInterval = 60
@@ -283,6 +342,7 @@ func wsHealthCheck(container *melody.Melody) {
 	}
 }
 
+//説明: 個別のデバイスにPingを送り、応答時間（レイテンシ）を計測します。
 func pingDevice(s *melody.Session) {
 	t := time.Now().UnixMilli()
 	trigger := utils.GetStrUUID()
@@ -295,6 +355,13 @@ func pingDevice(s *melody.Session) {
 	}, s.UUID, trigger, 3*time.Second)
 }
 
+/*
+説明: 認証を行うハンドラーファンクションを返します。
+クッキー: Authorization クッキーをチェックし、既に認証済みか確認します。
+Basic認証: 認証されていない場合、Basic認証を行い、成功したら Authorization クッキーをセットします。
+ブロックリスト: 認証に失敗したクライアントを一時的にブロックします。
+
+*/
 func checkAuth() gin.HandlerFunc {
 	// Token as key and update timestamp as value.
 	// Stores authenticated tokens.
@@ -375,6 +442,7 @@ func checkAuth() gin.HandlerFunc {
 	}
 }
 
+//説明: クライアントが gzip圧縮 に対応しているか確認し、対応していればgzip圧縮された静的ファイルを提供します。
 func serveGzip(ctx *gin.Context, statikFS http.FileSystem) bool {
 	headers := ctx.Request.Header
 	filename := path.Clean(ctx.Request.RequestURI)
@@ -438,6 +506,9 @@ func serveGzip(ctx *gin.Context, statikFS http.FileSystem) bool {
 	return true
 }
 
+/*
+説明: キャッシュが有効かどうかを確認し、キャッシュが有効であれば304 Not Modifiedステータスを返します。
+*/
 func checkCache(ctx *gin.Context, _ http.FileSystem) bool {
 	filename := path.Clean(ctx.Request.RequestURI)
 

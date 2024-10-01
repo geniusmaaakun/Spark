@@ -6,12 +6,36 @@ import (
 	"Spark/server/handler/utility"
 	"Spark/utils"
 	"Spark/utils/melody"
-	"github.com/gin-gonic/gin"
 	"net/http"
 	"time"
+
+	"github.com/gin-gonic/gin"
 )
 
+/*
+リモートクライアントのプロセス管理を行うためのAPIを提供しています。
+リモートデバイス上で実行中のプロセスをリスト表示したり、特定のプロセスを終了させる機能を実装しています。以下に各関数の詳細な解説を行います。
+
+
+ListDeviceProcesses 関数はリモートデバイス上のプロセス一覧を取得し、クライアントに返します。
+KillDeviceProcess 関数は指定されたプロセスIDを元にリモートデバイス上のプロセスを終了させます。
+両関数とも、リクエストごとにユニークなイベントIDを生成し、リモートデバイスにリクエストを送信します。リモートデバイスからの応答を待つために、5秒間のタイムアウトが設定されています。
+*/
+
 // ListDeviceProcesses will list processes on remote client
+/*
+この関数は、リモートデバイス上で実行されているプロセスのリストを取得します。
+
+処理内容:
+CheckForm 関数を使ってリクエストの検証を行います（connUUIDを取得します）。検証に失敗した場合は処理を中止します。
+trigger: リクエストごとにユニークなイベントIDを生成します。
+SendPackByUUID: リモートデバイスに対してプロセスリストを取得するリクエスト（PROCESSES_LIST）を送信します。
+AddEventOnce: リモートデバイスからの応答を待ちます。
+リモートデバイスが成功の応答を返した場合、HTTP 200 OK と共にプロセスリストを返します。
+エラーが発生した場合、HTTP 500 Internal Server Error を返します。
+タイムアウト（5秒以内に応答がない場合）時には、504 Gateway Timeout を返します。
+
+*/
 func ListDeviceProcesses(ctx *gin.Context) {
 	connUUID, ok := utility.CheckForm(ctx, nil)
 	if !ok {
@@ -33,6 +57,19 @@ func ListDeviceProcesses(ctx *gin.Context) {
 
 // KillDeviceProcess will try to get send a packet to
 // client and let it kill the process specified.
+/*
+役割:
+この関数は、リモートデバイス上で特定のプロセス（pidで指定されたプロセス）を終了させます。
+
+処理内容:
+CheckForm 関数でリクエストの検証を行い、プロセスID（pid）を取得します。
+trigger: リクエストごとにユニークなイベントIDを生成します。
+SendPackByUUID: リモートデバイスに対してプロセス終了リクエスト（PROCESS_KILL）を送信します。
+AddEventOnce: リモートデバイスからの応答を待ちます。
+リモートデバイスがプロセス終了に成功した場合、HTTP 200 OK と共に成功を通知します。
+エラーが発生した場合、HTTP 500 Internal Server Error を返し、エラーメッセージを記録します。
+タイムアウト（5秒以内に応答がない場合）時には、504 Gateway Timeout を返し、タイムアウトを警告します。
+*/
 func KillDeviceProcess(ctx *gin.Context) {
 	var form struct {
 		Pid int32 `json:"pid" yaml:"pid" form:"pid" binding:"required"`

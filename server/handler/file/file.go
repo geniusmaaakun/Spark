@@ -8,15 +8,31 @@ import (
 	"Spark/utils"
 	"Spark/utils/melody"
 	"fmt"
-	"github.com/gin-gonic/gin"
 	"net/http"
 	"net/url"
 	"path"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/gin-gonic/gin"
 )
 
+/*
+Goを使ったファイル管理のためのAPIを実装しており、リモートデバイスとブラウザの間でファイル操作（削除、リスト取得、ファイル取得、アップロードなど）を行うための機能を提供しています。
+以下では、各関数の役割とその処理内容について解説します。
+
+
+リモートデバイスとブラウザ間でのファイル操作を行うためのAPIを実装しています。Ginを使ったHTTPリクエスト処理、Melodyを使ったWebSocket通信、ファイルのアップロード、ダウンロード、削除など、様々なファイル操作に対応しています。また、エラーハンドリングやタイムアウト処理も適切に行われており、信頼性の高い通信を提供します。
+*/
+
+/*
+目的: リモートデバイス上のファイルを削除します。
+処理内容:
+リクエストからファイルリストを取得し、指定されたファイルを削除するリクエストをデバイスに送信します。
+デバイスからの応答を待ち、削除が成功したかどうかを確認します。
+タイムアウト（5秒間応答がない）時には、504 Gateway Timeoutを返します。
+*/
 // RemoveDeviceFiles will try to get send a packet to
 // client and let it upload the file specified.
 func RemoveDeviceFiles(ctx *gin.Context) {
@@ -54,6 +70,12 @@ func RemoveDeviceFiles(ctx *gin.Context) {
 	}
 }
 
+/*
+目的: リモートデバイス上の指定されたパスにあるファイルをリスト表示します。
+処理内容:
+デバイスに対してファイルリストを取得するリクエストを送信し、応答があれば結果を返します。
+タイムアウト時には504 Gateway Timeoutを返します。
+*/
 // ListDeviceFiles will list files on remote client
 func ListDeviceFiles(ctx *gin.Context) {
 	var form struct {
@@ -77,6 +99,13 @@ func ListDeviceFiles(ctx *gin.Context) {
 	}
 }
 
+/*
+目的: リモートデバイスからファイルを取得し、ブラウザに提供します。
+処理内容:
+デバイスに対してファイル取得リクエストを送信し、応答があればファイルデータを転送します。
+部分的なファイル取得も可能で、HTTPのRangeヘッダーに対応しています。
+タイムアウト時には504 Gateway Timeoutを返します。
+*/
 // GetDeviceFiles will try to get send a packet to
 // client and let it upload the file specified.
 func GetDeviceFiles(ctx *gin.Context) {
@@ -217,6 +246,12 @@ func GetDeviceFiles(ctx *gin.Context) {
 	close(wait)
 }
 
+/*
+目的: リモートデバイスからテキストファイルを取得し、ブラウザに提供します。
+処理内容:
+ファイル取得のためのリクエストをデバイスに送り、ファイルデータを取得します。
+タイムアウト時には504 Gateway Timeoutを返します。
+*/
 // GetDeviceTextFile will try to get send a packet to
 // client and let it upload the text file.
 func GetDeviceTextFile(ctx *gin.Context) {
@@ -294,6 +329,12 @@ func GetDeviceTextFile(ctx *gin.Context) {
 	close(wait)
 }
 
+/*
+目的: ブラウザからアップロードされたファイルをリモートデバイスに転送します。
+処理内容:
+ファイルを指定されたパスにアップロードし、完了後にレスポンスを返します。
+タイムアウト時には504 Gateway Timeoutを返します。
+*/
 // UploadToDevice handles file from browser
 // and transfer it to device.
 func UploadToDevice(ctx *gin.Context) {

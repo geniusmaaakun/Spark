@@ -7,11 +7,25 @@ import (
 	"Spark/utils"
 	"Spark/utils/melody"
 	"encoding/hex"
-	"github.com/gin-gonic/gin"
 	"net/http"
 	"reflect"
+
+	"github.com/gin-gonic/gin"
 )
 
+/*
+リモートデバイス上でターミナルセッションを管理するためのAPIを実装しています。
+リモートデバイスとブラウザ間でのターミナル入力・出力をWebSocketを使って処理しています。以下にコードの各部分の詳細な解説を行います。
+
+リモートデバイスとブラウザ間のターミナルセッションをWebSocketを使って実装しています。特定のデバイスに対してターミナルを開き、コマンドの送受信やセッションの管理を行うための仕組みが備わっています。
+*/
+
+/*
+uuid: ターミナルセッションの一意なID。
+device: 接続されているリモートデバイスのID。
+session: ブラウザとのWebSocketセッション。
+deviceConn: リモートデバイスとのWebSocketセッション。
+*/
 type terminal struct {
 	uuid       string
 	device     string
@@ -19,8 +33,16 @@ type terminal struct {
 	deviceConn *melody.Session
 }
 
+//terminalSessions は、リモートデバイスとブラウザ間のWebSocketセッションを管理するための melody ライブラリを使用しています。
 var terminalSessions = melody.New()
 
+/*
+MaxMessageSize: WebSocketで送信できるメッセージの最大サイズを設定。
+HandleConnect: 新しいWebSocket接続が確立されたときに onTerminalConnect が呼び出されます。
+HandleMessage: テキストまたはバイナリメッセージが受信されたときに onTerminalMessage が呼び出されます。
+HandleDisconnect: WebSocket接続が切断されたときに onTerminalDisconnect が呼び出されます。
+WSHealthCheck: WebSocketのヘルスチェックを行い、アクティブでない接続をクリーンアップする機能。
+*/
 func init() {
 	terminalSessions.Config.MaxMessageSize = common.MaxMessageSize
 	terminalSessions.HandleConnect(onTerminalConnect)
@@ -30,6 +52,10 @@ func init() {
 	go utility.WSHealthCheck(terminalSessions, sendPack)
 }
 
+/*
+WebSocketの初期化処理です。secretとdeviceというパラメータをクエリから取得し、それを検証します。
+クライアントがWebSocketで接続していることを確認し、terminalSessionsにセッションを登録します。
+*/
 // InitTerminal handles terminal websocket handshake event
 func InitTerminal(ctx *gin.Context) {
 	if !ctx.IsWebsocket() {
@@ -63,6 +89,10 @@ func InitTerminal(ctx *gin.Context) {
 	})
 }
 
+/*
+この関数はターミナルイベントのラッパーです。リモートデバイスからターミナルにデータが送信された場合、そのデータを処理してブラウザに返します。
+TERMINAL_INIT や TERMINAL_OUTPUT などのイベントに応じて処理を分岐させます。
+*/
 // terminalEventWrapper returns a eventCallback function that will
 // be called when device need to send a packet to browser
 func terminalEventWrapper(terminal *terminal) common.EventCallback {
@@ -128,6 +158,10 @@ func terminalEventWrapper(terminal *terminal) common.EventCallback {
 	}
 }
 
+/*
+WebSocket接続が確立された際に呼び出されるコールバック関数です。
+デバイスの存在を確認し、セッションを初期化します。
+*/
 func onTerminalConnect(session *melody.Session) {
 	device, ok := session.Get(`Device`)
 	if !ok {
@@ -164,6 +198,10 @@ func onTerminalConnect(session *melody.Session) {
 	})
 }
 
+/*
+WebSocket経由で受信したメッセージを処理します。
+バイナリメッセージかどうかを確認し、適切に処理を振り分けます。
+*/
 func onTerminalMessage(session *melody.Session, data []byte) {
 	var pack modules.Packet
 	val, ok := session.Get(`Terminal`)
@@ -249,6 +287,10 @@ func onTerminalMessage(session *melody.Session, data []byte) {
 	session.Close()
 }
 
+/*
+WebSocketが切断された際に呼び出されます。
+セッションのクリーンアップを行い、関連するリソースを解放します。
+*/
 func onTerminalDisconnect(session *melody.Session) {
 	common.Info(session, `TERMINAL_CLOSE`, `success`, ``, nil)
 	val, ok := session.Get(`Terminal`)
@@ -267,6 +309,7 @@ func onTerminalDisconnect(session *melody.Session) {
 	terminal = nil
 }
 
+//ターミナルセッションにデータを送信するための関数です。
 func sendPack(pack modules.Packet, session *melody.Session) bool {
 	if session == nil {
 		return false
@@ -280,6 +323,7 @@ func sendPack(pack modules.Packet, session *melody.Session) bool {
 	return err == nil
 }
 
+//指定されたデバイスIDに関連するすべてのターミナルセッションを閉じます。
 func CloseSessionsByDevice(deviceID string) {
 	var queue []*melody.Session
 	terminalSessions.IterSessions(func(_ string, session *melody.Session) bool {

@@ -9,16 +9,33 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"github.com/gin-gonic/gin"
 	"net/http"
 	"os"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/gin-gonic/gin"
 )
 
+/*
+WebSocket通信やデバイス管理、およびクライアントとサーバー間のコマンド実行に関する一連のユーティリティ機能を提供しています。
+以下に、このコードの主要部分を解説します。
+
+
+リモートデバイス管理を行うWebサーバーの一部として機能します。リモートデバイスとブラウザとの通信をWebSocketで実現し、クライアントデバイスの管理やコマンド実行、デバイスのヘルスチェックを行うための重要なユーティリティ関数が含まれています。また、暗号化されたデータ通信やバージョン管理などもサポートしており、実用的なデバイス管理ソリューションを提供します。
+*/
+
+// 送信関数の型
 type Sender func(pack modules.Packet, session *melody.Session) bool
 
+/*
+説明: リクエストから接続UUIDまたはデバイスIDを取得して、フォームデータが有効かどうかを確認します。
+機能:
+form 引数が nil でない場合、リクエストのデータをバインド（デシリアライズ）し、不正なデータがあれば400エラーを返します。
+UUIDまたはデバイスIDをチェックし、デバイスが存在しない場合は502エラーを返します。
+デバイスが存在する場合は、UUIDを返します。
+*/
 // CheckForm checks if the form contains the required fields.
 // Every request must contain connection UUID or device ID.
 func CheckForm(ctx *gin.Context, form any) (string, bool) {
@@ -43,6 +60,13 @@ func CheckForm(ctx *gin.Context, form any) (string, bool) {
 	return connUUID, true
 }
 
+/*
+説明: デバイス情報に関するイベント（接続ハンドシェイクやデバイス情報の更新）を処理します。
+機能:
+クライアントから送信されたデータをデシリアライズして、デバイスの情報を更新します。
+新しいデバイスが接続された場合、同じデバイスIDを持つ既存のセッションがあれば、それを終了させます。
+デバイスのCPU、RAM、ネットワークなどの情報を更新し、デバイスがオンラインであることをログに記録します。
+*/
 // OnDevicePack handles events about device info.
 // Such as websocket handshake and update device info.
 func OnDevicePack(data []byte, session *melody.Session) error {
@@ -106,6 +130,12 @@ func OnDevicePack(data []byte, session *melody.Session) error {
 	return nil
 }
 
+/*
+説明: クライアントが最新バージョンであるかどうかを確認し、必要に応じて更新を提供します。
+機能:
+クライアントからのOS、アーキテクチャ、コミット情報を取得し、サーバー上の現在のバージョンと比較します。
+クライアントが最新でない場合、クライアントに更新データを提供します（client.cfgなどの構成データを含むバイナリファイルの形で）。
+*/
 // CheckUpdate will check if client need update and return latest client if so.
 func CheckUpdate(ctx *gin.Context) {
 	var form struct {
@@ -223,6 +253,12 @@ func CheckUpdate(ctx *gin.Context) {
 	}
 }
 
+/*
+説明: 指定されたコマンドをリモートデバイス上で実行します。
+機能:
+コマンドと引数をリクエストから取得し、ターゲットデバイスに対してコマンドを送信します。
+5秒以内にレスポンスが返ってこない場合、タイムアウトエラーを返します。
+*/
 // ExecDeviceCmd execute command on device.
 func ExecDeviceCmd(ctx *gin.Context) {
 	var form struct {
@@ -263,6 +299,11 @@ func ExecDeviceCmd(ctx *gin.Context) {
 	}
 }
 
+/*
+説明: 接続されているすべてのクライアントデバイスの情報を取得して返します。
+機能:
+common.Devices に保存されているすべてのデバイス情報を取得し、HTTPレスポンスとして返します。
+*/
 // GetDevices will return all info about all clients.
 func GetDevices(ctx *gin.Context) {
 	devices := map[string]any{}
@@ -273,6 +314,12 @@ func GetDevices(ctx *gin.Context) {
 	ctx.JSON(http.StatusOK, modules.Packet{Code: 0, Data: devices})
 }
 
+/*
+説明: 特定のコマンド（ロック、ログオフ、シャットダウンなど）をクライアントデバイスに送信します。
+機能:
+act パラメータを取得し、それに基づいてリモートデバイスに対してコマンドを実行します。
+クライアントがオフラインの場合でも、コマンドが成功したと見なします。
+*/
 // CallDevice will call client with command from browser.
 func CallDevice(ctx *gin.Context) {
 	act := strings.ToUpper(ctx.Param(`act`))
@@ -326,6 +373,11 @@ func CallDevice(ctx *gin.Context) {
 	}
 }
 
+/*
+説明: データをセッションごとに一意な「Secret」を使用してシンプルなXOR暗号化を行います。
+機能:
+セッションの Secret を使用して、データをXOR方式で暗号化または復号化します。
+*/
 func SimpleEncrypt(data []byte, session *melody.Session) []byte {
 	temp, ok := session.Get(`Secret`)
 	if !ok {
@@ -344,6 +396,13 @@ func SimpleDecrypt(data []byte, session *melody.Session) []byte {
 	return utils.XOR(data, secret)
 }
 
+/*
+説明: WebSocket接続のヘルスチェックを行います。
+機能:
+一定期間応答がないWebSocketセッションをクローズします。
+各セッションに対して PING パケットを送信し、応答がないセッションをクローズします。
+最後のメッセージが受信されてから300秒以上経過したセッションも終了させます。
+*/
 func WSHealthCheck(container *melody.Melody, sender Sender) {
 	const MaxIdleSeconds = 300
 	ping := func(uuid string, s *melody.Session) {

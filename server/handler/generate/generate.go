@@ -9,14 +9,29 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"github.com/gin-gonic/gin"
 	"math/big"
 	"net/http"
 	"os"
 	"strconv"
 	"strings"
+
+	"github.com/gin-gonic/gin"
 )
 
+/*
+クライアント側のバイナリファイル生成および設定ファイルを暗号化して埋め込む処理を提供するWebサーバーAPIを実装しています。
+クライアント（OSやアーキテクチャに依存する実行ファイル）に対して設定情報（UUID、キー、ホスト情報など）を埋め込み、そのファイルをダウンロードできるようにします。
+
+
+リモートクライアントの設定生成とファイルダウンロードを行うWebサーバーの一部を構成しています。設定情報を暗号化し、OSやアーキテクチャに応じたクライアントバイナリに埋め込んで送信する仕組みが実装されています。
+*/
+
+//clientCfg 構造体: クライアント側の設定を表現する構造体で、セキュアな接続かどうかやホスト情報、ポート、UUID、暗号キーなどを保持します。
+/*
+役割: クライアントの接続設定を保持するための構造体です。
+Secureがtrueの場合はSSLを使用することを示し、HostやPort、Pathはクライアントが接続するための情報です。
+UUIDとKeyはクライアントごとに異なる識別子および暗号化キーとして使用されます。
+*/
 type clientCfg struct {
 	Secure bool   `json:"secure"`
 	Host   string `json:"host"`
@@ -30,6 +45,11 @@ var (
 	ErrTooLargeEntity = errors.New(`length of data can not excess buffer size`)
 )
 
+//CheckClient 関数: クライアントが存在するかどうか、設定が正しいかを検証します。
+/*
+役割: リクエストされたOSやアーキテクチャに対応するクライアントバイナリファイルが存在するかを確認します。
+クライアント設定の生成も試みますが、設定が大きすぎる場合や生成に失敗した場合は、適切なHTTPエラーを返します。
+*/
 func CheckClient(ctx *gin.Context) {
 	var form struct {
 		OS     string `json:"os" yaml:"os" form:"os" binding:"required"`
@@ -67,6 +87,12 @@ func CheckClient(ctx *gin.Context) {
 	ctx.JSON(http.StatusOK, modules.Packet{Code: 0})
 }
 
+//GenerateClient 関数: クライアントのバイナリファイルを生成し、設定情報を埋め込んだバイナリファイルをレスポンスとして返します。
+/*
+役割: クライアントの実行ファイル（OSとアーキテクチャに対応したバイナリファイル）を生成し、設定情報を埋め込んでレスポンスとして送信します。
+ファイルをバイト単位で読み込み、指定された位置にクライアントの設定情報を暗号化して埋め込みます。
+ファイルはストリーミングで送信され、HTTPヘッダーには適切なファイル名やコンテンツ情報が設定されます。
+*/
 func GenerateClient(ctx *gin.Context) {
 	var form struct {
 		OS     string `json:"os" yaml:"os" form:"os" binding:"required"`
@@ -143,6 +169,12 @@ func GenerateClient(ctx *gin.Context) {
 	}
 }
 
+//genConfig 関数: クライアントの設定情報を暗号化し、バッファに埋め込む処理を行います。
+/*
+役割: クライアント設定を暗号化し、384バイトの固定サイズのデータを生成します。
+設定情報を暗号化した後、その長さを2バイトのビッグエンディアン形式でエンコードして先頭に付加します。
+最終的に、バッファサイズが不足している場合はランダムなデータで埋めます。
+*/
 func genConfig(cfg clientCfg) ([]byte, error) {
 	data, err := utils.JSON.Marshal(cfg)
 	if err != nil {
