@@ -195,6 +195,8 @@ func genConfig(cfg clientCfg) ([]byte, error) {
 	dataLen := big.NewInt(int64(len(final))).Bytes()
 	dataLen = append(bytes.Repeat([]byte{'\x00'}, 2-len(dataLen)), dataLen...)
 
+	// 暗号化されたバッファの長さが 384 未満の場合、
+	// 残りのバイトにランダム バイトを追加します。
 	// If the length of encrypted buffer is less than 384,
 	// append the remaining bytes with random bytes.
 	final = append(dataLen, final...)
