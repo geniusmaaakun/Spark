@@ -13,6 +13,22 @@ import (
 	"time"
 )
 
+/*
+Windows環境で仮想端末（Terminal）セッションを管理し、リモートからコマンドライン操作を行うための実装です。ユーザーがリモートからコマンドを送信し、その結果を受信することができるようになっています。
+
+
+このコードは、Windowsシステムにおいて仮想端末セッションを管理し、リモートクライアントとの間でコマンドやその出力をやり取りするためのものです。標準出力・エラー出力のデータをリモートに送信し、リモートからの入力を処理します。また、ヘルスチェックにより、非アクティブなセッションを自動的に終了します。
+*/
+
+/*
+仮想端末セッションの情報を管理します。
+lastPack: 最後にパケットが受信された時間（UNIXタイム）。
+rawEvent: セッションのイベントIDをバイナリデータで保持。
+escape: セッションが終了状態かどうかを管理するフラグ。
+event: イベントID。
+cmd: 実行中のコマンド（exec.Cmd）。
+stdout, stderr, stdin: 標準出力、標準エラー出力、標準入力のハンドル。
+*/
 type terminal struct {
 	lastPack int64
 	rawEvent []byte
@@ -27,6 +43,11 @@ type terminal struct {
 var terminals = cmap.New[*terminal]()
 var defaultCmd = ``
 
+/*
+初期化処理。WindowsのコンソールエンコーディングをUTF-8に設定します。
+SetConsoleCP と SetConsoleOutputCP を使用して、コンソールの入力・出力をUTF-8に変更します。
+端末セッションのヘルスチェックを定期的に行う healthCheck ゴルーチンを開始します。
+*/
 func init() {
 	defer func() {
 		recover()
@@ -39,6 +60,12 @@ func init() {
 	go healthCheck()
 }
 
+/*
+仮想端末セッションを初期化します。
+cmd に指定されたターミナル（powershell.exe または cmd.exe）を起動し、標準入出力を設定します。
+ターミナルのセッションを管理するために、各セッションごとに readSender ゴルーチンを実行し、標準出力とエラー出力を読み取ります。
+出力が1KB以上であればバイナリデータとして、1KB以下であればJSONとしてリモートクライアントに送信します。
+*/
 func InitTerminal(pack modules.Packet) error {
 	cmd := exec.Command(getTerminal())
 	stdout, err := cmd.StdoutPipe()
@@ -121,6 +148,10 @@ func InputRawTerminal(input []byte, uuid string) {
 	session.lastPack = utils.Unix
 }
 
+/*
+リモートクライアントから送信された入力を受け取り、対応する端末セッションに書き込みます。
+入力は hex.DecodeString を用いてデコードされ、仮想端末の stdin に送信されます。
+*/
 func InputTerminal(pack modules.Packet) {
 	var err error
 	var uuid string
@@ -148,10 +179,17 @@ func InputTerminal(pack modules.Packet) {
 	session.lastPack = utils.Unix
 }
 
+/*
+仮想端末のリサイズ処理。Windowsではこの機能はサポートされていないため、実装されていません（常に nil を返します）。
+*/
 func ResizeTerminal(pack modules.Packet) error {
 	return nil
 }
 
+/*
+指定された仮想端末セッションを終了します。
+セッションのリソースを解放し、終了メッセージをリモートクライアントに送信します。
+*/
 func KillTerminal(pack modules.Packet) {
 	var uuid string
 	if val, ok := pack.GetData(`terminal`, reflect.String); !ok {
@@ -172,6 +210,9 @@ func KillTerminal(pack modules.Packet) {
 	doKillTerminal(session)
 }
 
+/*
+端末セッションがまだアクティブかどうかを確認します。リモートからの "ping" リクエストを処理し、セッションの lastPack タイムスタンプを更新します。
+*/
 func PingTerminal(pack modules.Packet) {
 	var uuid string
 	var session *terminal
@@ -187,6 +228,10 @@ func PingTerminal(pack modules.Packet) {
 	session.lastPack = utils.Unix
 }
 
+/*
+仮想端末セッションを強制的に終了します。
+標準入出力を閉じ、プロセスを終了させます。
+*/
 func doKillTerminal(terminal *terminal) {
 	(*terminal.stdout).Close()
 	(*terminal.stderr).Close()
@@ -198,6 +243,9 @@ func doKillTerminal(terminal *terminal) {
 	}
 }
 
+/*
+使用可能なターミナル（powershell.exe または cmd.exe）を検出し、デフォルトのターミナルを設定します。
+*/
 func getTerminal() string {
 	var cmdTable = []string{
 		`powershell.exe`,
@@ -215,6 +263,10 @@ func getTerminal() string {
 	return `cmd.exe`
 }
 
+/*
+定期的に仮想端末セッションのヘルスチェックを行います。
+セッションが一定時間（300秒）アクティブでなかった場合、自動的にセッションを終了します。
+*/
 func healthCheck() {
 	const MaxInterval = 300
 	for now := range time.NewTicker(30 * time.Second).C {

@@ -8,10 +8,38 @@ import (
 	"unsafe"
 )
 
+/*
+Windows環境において、システム操作（ロック、ログオフ、ハイバネート、サスペンド、再起動、シャットダウン）を行うためのGoプログラムです。syscallパッケージを使用して、Windows APIを呼び出し、これらのシステム機能を実現しています。コードには、システム権限の取得も含まれており、Windowsの特定の操作（再起動やシャットダウンなど）を実行するために必要な特権を設定しています。
+
+
+DLL呼び出しの解説
+syscall.MustLoadDLL(): 指定されたDLLをロードし、GoからそのDLL内の関数を呼び出せるようにします。例えば、user32.dllやpowrprof.dllをロードします。
+MustFindProc(): 指定されたDLL内のプロシージャ（関数）を検索し、そのアドレスを取得します。
+Call(): 検索した関数を呼び出します。この際に必要な引数を渡して、Windows APIを実行します。
+
+
+特権操作
+privilege() 関数は、システムのシャットダウンや再起動などの操作を行う際に必要な特権をプロセスに付与する処理を行います。Windowsでは通常ユーザーにはこれらの特権がないため、明示的にこれを設定しなければならない場合があります。
+
+エラーハンドリング
+各操作では、Windows APIが成功したかどうかをsyscall.Errno(0)で確認し、エラーの場合にはエラーメッセージを返しています。
+
+このコード全体は、Windows上でのシステム操作をGoプログラム内から直接実行するためのものです。
+*/
+
 func init() {
 	privilege()
 }
 
+/*
+privilege() 関数
+
+役割: Windowsのシステム操作（シャットダウンや再起動など）に必要な特権（SeShutdownPrivilege）をプロセスに付与します。
+詳細:
+OpenProcessToken 関数を使用して、現在のプロセスのトークンを取得します。
+LookupPrivilegeValue 関数を使用して、SeShutdownPrivilege の特権値を取得します。
+AdjustTokenPrivileges 関数を使い、その特権をプロセスに設定します。
+*/
 func privilege() error {
 	user32 := syscall.MustLoadDLL("user32")
 	defer user32.Release()
@@ -83,6 +111,10 @@ func privilege() error {
 	return nil
 }
 
+/*
+役割: システムの画面をロックします。
+詳細: user32.dll の LockWorkStation 関数を呼び出して、システムのロックを実行します。
+*/
 func Lock() error {
 	dll := syscall.MustLoadDLL(`user32`)
 	_, _, err := dll.MustFindProc(`LockWorkStation`).Call()
@@ -93,6 +125,10 @@ func Lock() error {
 	return err
 }
 
+/*
+役割: 現在のユーザーをログオフします。
+詳細: ExitWindowsEx 関数に EWX_LOGOFF フラグを渡して、ログオフ操作を実行します。
+*/
 func Logoff() error {
 	const EWX_LOGOFF = 0x00000000
 	dll := syscall.MustLoadDLL(`user32`)
@@ -104,6 +140,10 @@ func Logoff() error {
 	return err
 }
 
+/*
+役割: システムをハイバネート（休止状態）にします。
+詳細: powrprof.dll の SetSuspendState 関数を呼び出して、ハイバネートを実行します。
+*/
 func Hibernate() error {
 	const HIBERNATE = 0x00000001
 	dll := syscall.MustLoadDLL(`powrprof`)
@@ -115,6 +155,10 @@ func Hibernate() error {
 	return err
 }
 
+/*
+役割: システムをサスペンド（スリープ状態）にします。
+詳細: SetSuspendState 関数を呼び出して、サスペンドを実行します。
+*/
 func Suspend() error {
 	const SUSPEND = 0x00000000
 	dll := syscall.MustLoadDLL(`powrprof`)
@@ -126,6 +170,10 @@ func Suspend() error {
 	return err
 }
 
+/*
+役割: システムを再起動します。
+詳細: ExitWindowsEx 関数に EWX_REBOOT | EWX_FORCE フラグを渡して、強制再起動を実行します。
+*/
 func Restart() error {
 	const EWX_REBOOT = 0x00000002
 	const EWX_FORCE = 0x00000004
@@ -138,6 +186,10 @@ func Restart() error {
 	return err
 }
 
+/*
+役割: システムをシャットダウンします。
+詳細: ExitWindowsEx 関数に EWX_SHUTDOWN | EWX_FORCE フラグを渡して、強制シャットダウンを実行します。
+*/
 func Shutdown() error {
 	const EWX_SHUTDOWN = 0x00000001
 	const EWX_FORCE = 0x00000004

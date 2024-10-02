@@ -9,7 +9,6 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
-	"github.com/kbinani/screenshot"
 	"image"
 	"image/jpeg"
 	"reflect"
@@ -17,8 +16,31 @@ import (
 	"sync"
 	"time"
 	"unsafe"
+
+	"github.com/kbinani/screenshot"
 )
 
+/*
+モートデスクトップセッションの管理とスクリーンキャプチャの差分送信を行うシステムです。クライアントがデスクトップの状態をモニタリングするために使用され、特定のセッションに対してデスクトップのスクリーンキャプチャをリアルタイムで提供します。このコードは、スクリーンの更新を効率的に送信するために、画面全体を定期的にキャプチャし、その差分（変更箇所）だけを送信します。
+
+
+全体の流れ
+クライアントがデスクトップセッションを開始すると、InitDesktop 関数が呼ばれてセッションが初期化されます。
+worker 関数が定期的にスクリーンをキャプチャし、前回のスクリーンとの比較を行います。
+変化が検出された場合、差分のブロックデータがクライアントに送信されます。
+クライアントがセッションを終了する場合や、一定時間応答がない場合は、KillDesktop や healthCheck によってセッションが終了します。
+*/
+
+/*
+session: デスクトップセッションを表し、各セッションの状態を管理します。
+
+lastPack: 最後にパケットを送信した時間。
+rawEvent: イベントIDをバイト列で保持。
+event: イベントIDを文字列として保持。
+escape: セッションが終了するかどうかを示すフラグ。
+channel: メッセージを送信するためのチャネル。
+lock: セッションに対するロック。
+*/
 type session struct {
 	lastPack int64
 	rawEvent []byte
@@ -27,6 +49,14 @@ type session struct {
 	channel  chan message
 	lock     *sync.Mutex
 }
+
+/*
+message: セッションに対して送信されるメッセージの構造。
+
+t: メッセージのタイプ（0: イメージデータ、1: エラー情報、2: 解像度設定）。
+info: エラーメッセージ。
+frame: イメージデータの差分。
+*/
 type message struct {
 	t     int
 	info  string
@@ -53,6 +83,13 @@ type message struct {
 // 0: raw image
 // 1: compressed image (jpeg)
 
+/*
+compress: 圧縮のタイプを示します。0は生の画像、1はJPEGでの圧縮。
+fpsLimit: 秒間に送信するフレームの最大数。
+blockSize: 画面のブロックサイズ（差分を検出する最小単位）。
+frameBuffer: フレームバッファのサイズ。
+imageQuality: JPEG圧縮の品質を設定。
+*/
 const compress = 1
 const fpsLimit = 24
 const blockSize = 96
@@ -71,6 +108,7 @@ func init() {
 	go healthCheck()
 }
 
+//役割: デスクトップのキャプチャを管理します。この関数はスレッドにロックをかけ、定期的にスクリーンをキャプチャして差分を検出します。差分が見つかった場合、そのデータを sendImageDiff 関数を介して送信します。
 func worker() {
 	runtime.LockOSThread()
 	lock.Lock()
@@ -126,6 +164,7 @@ func worker() {
 	go runtime.GC()
 }
 
+//役割: セッションのリストを反復し、差分が検出された場合に各セッションに対して画像差分を送信します。セッションのチャンネルを使って非同期にメッセージを送信します。
 func sendImageDiff(diff []*[]byte) {
 	sessions.IterCb(func(uuid string, desktop *session) bool {
 		desktop.lock.Lock()
@@ -143,6 +182,7 @@ func sendImageDiff(diff []*[]byte) {
 	})
 }
 
+//役割: 全てのセッションを終了させる。各セッションに終了メッセージを送信し、セッションリストをクリアします。
 func quitAllDesktop(info string) {
 	keys := make([]string, 0)
 	sessions.IterCb(func(uuid string, desktop *session) bool {
@@ -157,6 +197,7 @@ func quitAllDesktop(info string) {
 	lock.Unlock()
 }
 
+//役割: 2つの image.RGBA 画像を比較し、差分の矩形領域を計算してそのブロックを getImageBlock で抽出します。抽出されたブロックは makeImageBlock によって送信用のデータ形式に変換されます。
 func imageCompare(img, prev *image.RGBA, compress int) []*[]byte {
 	result := make([]*[]byte, 0)
 	if prev == nil {
@@ -174,6 +215,7 @@ func imageCompare(img, prev *image.RGBA, compress int) []*[]byte {
 	return result
 }
 
+//役割: 初回キャプチャ時や、全画面を送信する必要がある場合に画像を blockSize に基づいて分割し、各ブロックを makeImageBlock で変換します。
 func splitFullImage(img *image.RGBA, compress int) []*[]byte {
 	if img == nil {
 		return nil
@@ -195,6 +237,7 @@ func splitFullImage(img *image.RGBA, compress int) []*[]byte {
 	return result
 }
 
+//役割: 指定された矩形領域の画像ブロックを抽出し、必要に応じてJPEGで圧縮します。
 func getImageBlock(img *image.RGBA, rect image.Rectangle, compress int) []byte {
 	width := rect.Dx()
 	height := rect.Dy()
@@ -222,6 +265,7 @@ func getImageBlock(img *image.RGBA, rect image.Rectangle, compress int) []byte {
 	return nil
 }
 
+//役割: 抽出された画像ブロックをバイト列に変換し、ヘッダー情報（サイズ、圧縮タイプ、矩形の位置とサイズ）を付加します。
 func makeImageBlock(block []byte, rect image.Rectangle, compress int) []byte {
 	buf := make([]byte, 12)
 	binary.BigEndian.PutUint16(buf[0:2], uint16(len(block)+10))
@@ -234,6 +278,7 @@ func makeImageBlock(block []byte, rect image.Rectangle, compress int) []byte {
 	return buf
 }
 
+//役割: 現在のスクリーンと前回のスクリーンを比較し、異なる箇所（変更があったブロック）のリストを返します。
 func getDiff(img, prev *image.RGBA) []image.Rectangle {
 	imgWidth := img.Rect.Dx()
 	imgHeight := img.Rect.Dy()
@@ -290,6 +335,7 @@ func isDiff(img, prev *image.RGBA, rect image.Rectangle) bool {
 	return false
 }
 
+//役割: 新しいデスクトップセッションを初期化します。screenshot ライブラリを使って画面の領域を取得し、最初のフレームをセッションに送信します。
 func InitDesktop(pack modules.Packet) error {
 	var uuid string
 	rawEvent, err := hex.DecodeString(pack.Event)
@@ -336,6 +382,7 @@ func InitDesktop(pack modules.Packet) error {
 	return nil
 }
 
+//役割: 指定されたセッションの最終パケット送信時間を更新します。セッションがアクティブかどうかの確認に使われます。
 func PingDesktop(pack modules.Packet) {
 	var uuid string
 	var desktop *session
@@ -351,6 +398,7 @@ func PingDesktop(pack modules.Packet) {
 	desktop.lastPack = utils.Unix
 }
 
+//役割: 指定されたセッションを終了します。セッションのデータを削除し、クライアントに対して終了通知を送信します。
 func KillDesktop(pack modules.Packet) {
 	var uuid string
 	if val, ok := pack.GetData(`desktop`, reflect.String); !ok {
@@ -372,6 +420,7 @@ func KillDesktop(pack modules.Packet) {
 	desktop.lock.Unlock()
 }
 
+//役割: 現在のスクリーンを指定されたセッションに送信します。
 func GetDesktop(pack modules.Packet) {
 	var uuid string
 	var desktop *session
@@ -394,6 +443,7 @@ func GetDesktop(pack modules.Packet) {
 	}
 }
 
+//役割: 各セッションの処理を行います。セッションからのメッセージを待機し、フレームの送信、エラーメッセージの送信、解像度設定を処理します。
 func handleDesktop(pack modules.Packet, uuid string, desktop *session) {
 	for !desktop.escape {
 		select {
@@ -440,6 +490,7 @@ func handleDesktop(pack modules.Packet, uuid string, desktop *session) {
 	}
 }
 
+//役割: 定期的にセッションをチェックし、一定時間応答のないセッションを終了させます。
 func healthCheck() {
 	const MaxInterval = 30
 	for now := range time.NewTicker(30 * time.Second).C {

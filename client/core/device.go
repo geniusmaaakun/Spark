@@ -5,20 +5,33 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
-	"github.com/denisbrodbeck/machineid"
-	"github.com/shirou/gopsutil/v3/cpu"
-	"github.com/shirou/gopsutil/v3/disk"
-	"github.com/shirou/gopsutil/v3/host"
-	"github.com/shirou/gopsutil/v3/mem"
-	"github.com/shirou/gopsutil/v3/net"
 	_net "net"
 	"os"
 	"os/user"
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/denisbrodbeck/machineid"
+	"github.com/shirou/gopsutil/v3/cpu"
+	"github.com/shirou/gopsutil/v3/disk"
+	"github.com/shirou/gopsutil/v3/host"
+	"github.com/shirou/gopsutil/v3/mem"
+	"github.com/shirou/gopsutil/v3/net"
 )
 
+/*
+システム情報を取得して modules.Device 構造体に格納する機能を提供します。具体的には、ローカルIPアドレス、MACアドレス、ネットワークIO情報、CPU、RAM、ディスク情報、デバイスの起動時間、ホスト名、ユーザー名などのシステム情報を収集します。
+
+
+machineid.ProtectedID: デバイス固有の識別子を生成します。主にデバイスを一意に識別するために使用されます。
+gopsutil ライブラリ: システムのCPU、メモリ、ディスク、ネットワーク、ホスト情報を取得するためのクロスプラットフォームライブラリです。
+*/
+
+/*
+概要: プライベートIPアドレスかどうかを判断します。
+仕組み: RFC1918で定義されたプライベートIPアドレス範囲（例: 10.0.0.0/8）に該当するかを確認します。
+*/
 func isPrivateIP(ip _net.IP) bool {
 	var privateIPBlocks []*_net.IPNet
 	for _, cidr := range []string{
@@ -40,6 +53,10 @@ func isPrivateIP(ip _net.IP) bool {
 	return false
 }
 
+/*
+概要: デバイスのローカルIPアドレスを取得します。
+仕組み: ネットワークインターフェースを調べ、プライベートIPアドレスを持つものを返します。該当しない場合はエラーを返します。
+*/
 func GetLocalIP() (string, error) {
 	ifaces, err := _net.Interfaces()
 	if err != nil {
@@ -71,6 +88,10 @@ func GetLocalIP() (string, error) {
 	return `<UNKNOWN>`, errors.New(`no IP address found`)
 }
 
+/*
+概要: デバイスのMACアドレスを取得します。
+仕組み: 使用可能なネットワークインターフェースのうち、最初のMACアドレスを取得して返します。
+*/
 func GetMacAddress() (string, error) {
 	interfaces, err := _net.Interfaces()
 	if err != nil {
@@ -89,6 +110,10 @@ func GetMacAddress() (string, error) {
 	return strings.ToUpper(address[0]), nil
 }
 
+/*
+概要: デバイスのネットワークIO情報を取得します。
+仕組み: gopsutil ライブラリを使って、ネットワークの送受信バイト数を2回取得し、その差分を計算して返します。
+*/
 func GetNetIOInfo() (modules.Net, error) {
 	result := modules.Net{}
 	first, err := net.IOCounters(false)
@@ -111,6 +136,10 @@ func GetNetIOInfo() (modules.Net, error) {
 	return result, nil
 }
 
+/*
+概要: デバイスのCPU情報を取得します。
+仕組み: gopsutil を使って、CPUのモデル名、論理・物理コア数、使用率を取得します。CPUの使用率は3秒間のサンプリングを行い計算します。
+*/
 func GetCPUInfo() (modules.CPU, error) {
 	result := modules.CPU{}
 	info, err := cpu.Info()
@@ -134,6 +163,10 @@ func GetCPUInfo() (modules.CPU, error) {
 	return result, nil
 }
 
+/*
+概要: デバイスのRAM情報を取得します。
+仕組み: 使用中のメモリ量、全体のメモリ量、使用率を取得して返します。
+*/
 func GetRAMInfo() (modules.IO, error) {
 	result := modules.IO{}
 	stat, err := mem.VirtualMemory()
@@ -146,6 +179,10 @@ func GetRAMInfo() (modules.IO, error) {
 	return result, nil
 }
 
+/*
+概要: デバイスのディスク使用情報を取得します。
+仕組み: すべてのディスクパーティションを調べ、それぞれの使用量を合計して返します。
+*/
 func GetDiskInfo() (modules.IO, error) {
 	devices := map[string]struct{}{}
 	result := modules.IO{}
@@ -167,6 +204,12 @@ func GetDiskInfo() (modules.IO, error) {
 	return result, nil
 }
 
+/*
+概要: デバイスの詳細情報を取得して、modules.Device 構造体にまとめて返します。
+収集する情報:
+ID: デバイス固有のID。machineid ライブラリを使用して取得します。失敗した場合はランダムなIDを生成します。
+ローカルIPアドレス、MACアドレス、CPU、ネットワークIO、RAM、ディスク使用量、起動時間、ホスト名、ユーザー名を取得し、まとめて返します。
+*/
 func GetDevice() (*modules.Device, error) {
 	id, err := machineid.ProtectedID(`Spark`)
 	if err != nil {
@@ -248,6 +291,9 @@ func GetDevice() (*modules.Device, error) {
 	}, nil
 }
 
+/*
+概要: デバイスの部分的な情報（CPU、ネットワークIO、メモリ、ディスク使用量、起動時間）を取得します。GetDevice に比べ、少ない情報を返します。
+*/
 func GetPartialInfo() (*modules.Device, error) {
 	cpuInfo, err := GetCPUInfo()
 	if err != nil {

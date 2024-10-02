@@ -118,6 +118,16 @@ func GenerateClient(ctx *gin.Context) {
 		ctx.AbortWithStatusJSON(http.StatusInternalServerError, modules.Packet{Code: 1, Msg: `${i18n|GENERATOR.CONFIG_GENERATE_FAILED}`})
 		return
 	}
+	/*
+		ここで cfgBytes が生成されます。
+		genConfig 関数は、clientCfg 構造体を元にクライアントの設定をバイト配列（[]byte）として生成します。この cfgBytes が後でテンプレート内の cfgBuffer と置き換えられます。
+		clientCfg には、以下のような情報が含まれます:
+		Secure: HTTPS を使用するかどうかを示すフラグ。
+		Host: クライアントが接続するホスト。
+		Port: クライアントが接続するポート。
+		Path: 接続するエンドポイントのパス。
+		UUID および Key: クライアントの識別情報と暗号化キー。
+	*/
 	cfgBytes, err := genConfig(clientCfg{
 		Secure: form.Secure == `true`,
 		Host:   form.Host,
@@ -145,6 +155,12 @@ func GenerateClient(ctx *gin.Context) {
 	} else {
 		ctx.Header(`Content-Disposition`, `attachment; filename=client; filename*=UTF-8''client`)
 	}
+
+	/*
+		cfgBuffer は、プレースホルダーとしてテンプレートファイル内に埋め込まれている 384 バイトのデータです。
+		ここでは、\x19 という値を 384 バイト分繰り返したバッファが定義されています。
+		テンプレートファイル内でこのバッファが存在する部分が、後で生成されるクライアントの設定に置き換えられます。
+	*/
 	// Find and replace plain buffer with encrypted configuration.
 	cfgBuffer := bytes.Repeat([]byte{'\x19'}, 384)
 	prevBuffer := make([]byte, 0)
@@ -153,7 +169,16 @@ func GenerateClient(ctx *gin.Context) {
 		n, err := tpl.Read(thisBuffer)
 		thisBuffer = thisBuffer[:n]
 		tempBuffer := append(prevBuffer, thisBuffer...)
+
+		//bytes.Index(tempBuffer, cfgBuffer) を使って、tempBuffer の中に cfgBuffer が含まれているかを探します。
 		bufIndex := bytes.Index(tempBuffer, cfgBuffer)
+		//含まれていれば、bytes.Replace(tempBuffer, cfgBuffer, cfgBytes, -1) を使って、cfgBuffer を cfgBytes に置き換えます。
+		/*
+			全体の流れ
+			テンプレートファイルを読み込む際に、プレースホルダー（cfgBuffer）を探し、それを生成されたクライアント設定（cfgBytes）に置き換えます。
+			プレースホルダーの置換が終わったデータをクライアントに送信し、最終的にカスタマイズされたクライアントバイナリをダウンロードできるようにします。
+			この手法により、事前にビルドされたクライアントバイナリにユーザー固有の設定情報を埋め込んで、カスタマイズしたクライアントを配布することが可能です。
+		*/
 		if bufIndex > -1 {
 			tempBuffer = bytes.Replace(tempBuffer, cfgBuffer, cfgBytes, -1)
 		}

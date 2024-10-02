@@ -12,6 +12,10 @@ import (
 	"unsafe"
 )
 
+/*
+Windows上でスクリーンキャプチャ（画面の一部または全体を画像として取得）を行うためのプログラムです。DirectX (DXGI) と GDI (Graphics Device Interface) の両方の方法を使用してスクリーンショットをキャプチャします。システムに応じて適切なキャプチャ手法を選択し、スクリーンショットを取得します。
+*/
+
 var (
 	libUser32, _               = syscall.LoadLibrary("user32.dll")
 	funcGetDesktopWindow, _    = syscall.GetProcAddress(syscall.Handle(libUser32), "GetDesktopWindow")
@@ -20,20 +24,40 @@ var (
 	funcEnumDisplaySettings, _ = syscall.GetProcAddress(syscall.Handle(libUser32), "EnumDisplaySettingsW")
 )
 
+//役割: Screen は、DXGI または GDI を使用してスクリーンキャプチャを行うためのインターフェースです。どちらの方法を使用するかは、ScreenCapture インターフェースを通じて決定されます。
 type Screen struct {
 	screen ScreenCapture
 }
+
+//役割: スクリーンキャプチャのための共通インターフェースです。DXGIやGDIを使用する具体的な実装を抽象化します。
 type ScreenCapture interface {
 	Init(uint, image.Rectangle) error
 	Capture() (*image.RGBA, error)
 	Release()
 }
+
+//役割: DXGI (DirectX Graphics Infrastructure) を使用してスクリーンキャプチャを行うための構造体です。DirectX 11を使って画面の複製機能を活用します。
+/*
+rect: キャプチャする領域を表す矩形。
+device, deviceCtx: DirectX 11 デバイスとデバイスコンテキスト。
+ddup: OutputDuplicator オブジェクトで、スクリーンの内容を複製します。
+*/
 type ScreenDXGI struct {
 	rect      image.Rectangle
 	device    *d3d11.ID3D11Device
 	deviceCtx *d3d11.ID3D11DeviceContext
 	ddup      *outputduplication.OutputDuplicator
 }
+
+// 役割: GDI（Graphics Device Interface）を使用してスクリーンキャプチャを行うための構造体です。
+/*
+rect: キャプチャ領域を表す矩形。
+hwnd: ウィンドウハンドル（デスクトップ全体を表す）。
+hdc, memoryDevice: デバイスコンテキスト、メモリデバイスコンテキスト。
+bitmap: ビットマップ形式でスクリーンの内容を保存するためのオブジェクト。
+bitmapInfo: ビットマップの情報ヘッダー。
+hmem, memptr: メモリ管理のためのハンドルとポインタ。
+*/
 type ScreenGDI struct {
 	rect           image.Rectangle
 	width          int
@@ -48,6 +72,7 @@ type ScreenGDI struct {
 	memptr         unsafe.Pointer
 }
 
+//役割: スクリーンキャプチャの初期化を行います。まずDXGIを試し、失敗した場合にはGDIを使用します。
 func (s *Screen) Init(displayIndex uint, rect image.Rectangle) {
 	dxgi := ScreenDXGI{}
 	if dxgi.Init(displayIndex, rect) == nil {
@@ -58,6 +83,8 @@ func (s *Screen) Init(displayIndex uint, rect image.Rectangle) {
 		s.screen = &gdi
 	}
 }
+
+//役割: DXGIを使ってスクリーンキャプチャを行います。キャプチャ結果は image.RGBA 形式で返されます。
 func (s *Screen) Capture() (*image.RGBA, error) {
 	return s.screen.Capture()
 }
@@ -65,6 +92,7 @@ func (s *Screen) Release() {
 	s.screen.Release()
 }
 
+//役割: DXGIを使ってスクリーンキャプチャを初期化します。d3d11.NewD3D11Device() を使ってDirectX 11デバイスを作成し、スクリーンの複製機能を設定します。
 func (s *ScreenDXGI) Init(displayIndex uint, rect image.Rectangle) error {
 	s.rect = rect
 	var err error
@@ -93,6 +121,8 @@ func (s *ScreenDXGI) Capture() (*image.RGBA, error) {
 	}
 	return img, err
 }
+
+//役割: 使用したリソース（メモリやデバイスコンテキストなど）を解放するためのメソッドです。
 func (s *ScreenDXGI) Release() {
 	if s.ddup != nil {
 		s.ddup.Release()
@@ -108,6 +138,7 @@ func (s *ScreenDXGI) Release() {
 	}
 }
 
+//役割: GDIを使ってスクリーンキャプチャを初期化します。CreateCompatibleDC や CreateCompatibleBitmap を使ってビットマップを作成し、スクリーンの内容を保存する準備をします。
 func (s *ScreenGDI) Init(_ uint, rect image.Rectangle) error {
 	s.rect = rect
 	s.width = rect.Dx()
@@ -152,6 +183,8 @@ func (s *ScreenGDI) Init(_ uint, rect image.Rectangle) error {
 	}
 	return nil
 }
+
+//役割: GDIを使ってスクリーンキャプチャを行います。ビットブロック転送 (BitBlt) を使って画面の内容をコピーし、GetDIBits でビットマップデータを取得します。
 func (s *ScreenGDI) Capture() (*image.RGBA, error) {
 	old := winGDI.SelectObject(s.memoryDevice, winGDI.HGDIOBJ(s.bitmap))
 	if old == 0 {
@@ -173,6 +206,8 @@ func (s *ScreenGDI) Capture() (*image.RGBA, error) {
 
 	return img, nil
 }
+
+//役割: 使用したリソース（メモリやデバイスコンテキストなど）を解放するためのメソッドです。
 func (s *ScreenGDI) Release() {
 	if s.hdc != 0 {
 		winGDI.ReleaseDC(s.hwnd, s.hdc)

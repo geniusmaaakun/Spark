@@ -9,12 +9,24 @@ import (
 	Screenshot "Spark/client/service/screenshot"
 	"Spark/client/service/terminal"
 	"Spark/modules"
-	"github.com/kataras/golog"
 	"os"
 	"os/exec"
 	"reflect"
 	"strings"
+
+	"github.com/kataras/golog"
 )
+
+/*
+クライアントサイドのWebSocket通信を通じて、さまざまなリモート操作を実行するためのハンドラ群を定義しています。クライアントはサーバーからのコマンドを受け取り、指定された操作（スクリーンショットの取得、プロセスの一覧表示、ファイル操作など）を実行します。
+
+全体の流れ
+WebSocketコネクションの確立: クライアントとサーバーの間でWebSocketを使って通信を行います。サーバーから送信されたデータ（Packet）を受け取り、適切なハンドラに渡します。
+ハンドラ群: 各コマンドに対して対応する関数（ハンドラ）が定義されています。例えば、ping コマンドが送られてきた場合は ping 関数が呼ばれ、クライアントの状態をサーバーに報告します。
+コールバック: ハンドラが実行された後、サーバーに成功または失敗のステータスを返します。
+
+リモート管理ソフトウェアのクライアント側の実装であり、サーバーからの指示に従ってさまざまなシステム操作（電源管理、ファイル管理、ターミナル操作、プロセス管理など）を行うための処理を担当しています。
+*/
 
 var handlers = map[string]func(pack modules.Packet, wsConn *common.Conn){
 	`PING`:             ping,
@@ -45,6 +57,10 @@ var handlers = map[string]func(pack modules.Packet, wsConn *common.Conn){
 	`COMMAND_EXEC`:     execCommand,
 }
 
+/*
+目的: サーバーに対して、クライアントがオンラインであることを示すために利用されます。また、クライアントの一部の情報（CPU使用率など）をサーバーに送信します。
+動作: GetPartialInfo() 関数でクライアントの基本情報を取得し、サーバーに送信します。
+*/
 func ping(pack modules.Packet, wsConn *common.Conn) {
 	wsConn.SendCallback(modules.Packet{Code: 0}, pack)
 	device, err := GetPartialInfo()
@@ -55,6 +71,10 @@ func ping(pack modules.Packet, wsConn *common.Conn) {
 	wsConn.SendPack(modules.CommonPack{Act: `DEVICE_UPDATE`, Data: *device})
 }
 
+/*
+目的: クライアントをオフラインにするために使用されます。
+動作: クライアントは自身のWebSocket接続を閉じ、システムを終了します（os.Exit(0)）。
+*/
 func offline(pack modules.Packet, wsConn *common.Conn) {
 	wsConn.SendCallback(modules.Packet{Code: 0}, pack)
 	stop = true
@@ -62,6 +82,10 @@ func offline(pack modules.Packet, wsConn *common.Conn) {
 	os.Exit(0)
 }
 
+/*
+目的: クライアントの画面をロックします（ユーザーがシステムにアクセスできない状態にする）。
+動作: basic.Lock() を呼び出してシステムをロックします。成功すればサーバーに成功メッセージを返します。
+*/
 func lock(pack modules.Packet, wsConn *common.Conn) {
 	err := basic.Lock()
 	if err != nil {
@@ -71,6 +95,10 @@ func lock(pack modules.Packet, wsConn *common.Conn) {
 	}
 }
 
+/*
+目的: クライアントユーザーをログオフさせます。
+動作: basic.Logoff() を呼び出してユーザーをログオフさせます。
+*/
 func logoff(pack modules.Packet, wsConn *common.Conn) {
 	err := basic.Logoff()
 	if err != nil {
@@ -80,6 +108,11 @@ func logoff(pack modules.Packet, wsConn *common.Conn) {
 	}
 }
 
+/*
+hibernate/suspend
+目的: クライアントのPCをハイバネートまたはスリープ状態にします。
+動作: それぞれ basic.Hibernate() や basic.Suspend() を呼び出して実行します。
+*/
 func hibernate(pack modules.Packet, wsConn *common.Conn) {
 	err := basic.Hibernate()
 	if err != nil {
@@ -98,6 +131,11 @@ func suspend(pack modules.Packet, wsConn *common.Conn) {
 	}
 }
 
+/*
+restart/shutdown
+目的: クライアントのPCを再起動またはシャットダウンします。
+動作: basic.Restart() または basic.Shutdown() を呼び出して実行します。
+*/
 func restart(pack modules.Packet, wsConn *common.Conn) {
 	err := basic.Restart()
 	if err != nil {
@@ -116,6 +154,10 @@ func shutdown(pack modules.Packet, wsConn *common.Conn) {
 	}
 }
 
+/*
+目的: クライアントのスクリーンショットを取得し、サーバーに送信します。
+動作: Screenshot.GetScreenshot() を呼び出し、スクリーンショットを取得して、指定された bridge（通信チャネル）を通してサーバーに送信します。
+*/
 func screenshot(pack modules.Packet, wsConn *common.Conn) {
 	var bridge string
 	if val, ok := pack.GetData(`bridge`, reflect.String); !ok {
@@ -155,6 +197,12 @@ func killTerminal(pack modules.Packet, wsConn *common.Conn) {
 	terminal.KillTerminal(pack)
 }
 
+/*
+目的: クライアント上のファイルの一覧を取得したり、ファイルをサーバーに送信します。
+動作:
+listFiles: 指定されたパスのファイルをリスト化しサーバーに送信します。
+fetchFile: 指定されたファイルを取得し、サーバーに送信します。
+*/
 func listFiles(pack modules.Packet, wsConn *common.Conn) {
 	path := `/`
 	if val, ok := pack.GetData(`path`, reflect.String); ok {
@@ -220,6 +268,12 @@ func removeFiles(pack modules.Packet, wsConn *common.Conn) {
 	}
 }
 
+/*
+目的: サーバーからクライアントにファイルをアップロードします。
+動作:
+uploadFiles: ファイルを指定された範囲でアップロードします。
+uploadTextFile: テキストファイルをアップロードします。
+*/
 func uploadFiles(pack modules.Packet, wsConn *common.Conn) {
 	var (
 		start, end int64
@@ -291,6 +345,12 @@ func uploadTextFile(pack modules.Packet, wsConn *common.Conn) {
 	}
 }
 
+/*
+目的: クライアント上で実行中のプロセスを一覧表示したり、指定したプロセスを終了します。
+動作:
+listProcesses: 実行中のプロセスのリストを取得し、サーバーに送信します。
+killProcess: 指定されたPIDのプロセスを終了します。
+*/
 func listProcesses(pack modules.Packet, wsConn *common.Conn) {
 	processes, err := process.ListProcesses()
 	if err != nil {
@@ -319,6 +379,14 @@ func killProcess(pack modules.Packet, wsConn *common.Conn) {
 	}
 }
 
+/*
+目的: デスクトップ共有またはリモート操作を実行します。
+動作:
+initDesktop: デスクトップセッションを開始します。
+pingDesktop: デスクトップセッションの状態を確認します。
+killDesktop: デスクトップセッションを終了します。
+getDesktop: デスクトップのスクリーンショットを取得します。
+*/
 func initDesktop(pack modules.Packet, wsConn *common.Conn) {
 	err := desktop.InitDesktop(pack)
 	if err != nil {
@@ -340,6 +408,10 @@ func getDesktop(pack modules.Packet, wsConn *common.Conn) {
 	desktop.GetDesktop(pack)
 }
 
+/*
+目的: クライアント側でコマンドを実行します。
+動作: サーバーから指定されたコマンド（および引数）を実行し、その結果をサーバーに返します。
+*/
 func execCommand(pack modules.Packet, wsConn *common.Conn) {
 	var proc *exec.Cmd
 	var cmd, args string

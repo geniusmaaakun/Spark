@@ -8,13 +8,27 @@ import (
 	"Spark/utils"
 	"Spark/utils/cmap"
 	"encoding/hex"
-	"github.com/creack/pty"
 	"os"
 	"os/exec"
 	"reflect"
 	"time"
+
+	"github.com/creack/pty"
 )
 
+/*
+Windows以外のオペレーティングシステム（LinuxやmacOSなど）で動作する仮想端末（terminal）を実装しています。仮想端末は、リモートでシェル（zsh、bash、shなど）を操作するために利用されます。このコードは、仮想端末の初期化、入力処理、リサイズ、終了、ヘルスチェックといった操作を管理しています。
+*/
+
+/*
+仮想端末の1つのセッションを表します。
+escape: この端末セッションが終了するかどうかを表すフラグ。
+lastPack: 最後にパケットを受信した時間。
+rawEvent: イベントをバイナリ形式で保持する配列。
+event: イベントID。
+pty: 仮想端末のファイルハンドル。
+cmd: 実行中のコマンド。
+*/
 type terminal struct {
 	escape   bool
 	lastPack int64
@@ -24,6 +38,7 @@ type terminal struct {
 	cmd      *exec.Cmd
 }
 
+//
 var terminals = cmap.New[*terminal]()
 var defaultShell = ``
 
@@ -31,6 +46,12 @@ func init() {
 	go healthCheck()
 }
 
+/*
+新しい端末セッションを初期化します。
+使用可能なシェル（zsh、bash、sh）を探して、仮想端末を開始します。
+pty.Start を使って仮想端末を起動し、端末セッションを作成します。
+読み取りループで、端末からの出力を監視し、1KB以上のデータはバイナリデータとして、1KB未満のデータはJSON形式でリモートに送信します。
+*/
 func InitTerminal(pack modules.Packet) error {
 	// try to get shell
 	// if shell is not found or unavailable, then fallback to `sh`
@@ -98,6 +119,10 @@ func InputRawTerminal(input []byte, uuid string) {
 	session.lastPack = utils.Unix
 }
 
+/*
+クライアントから端末への入力を処理します。
+クライアントから受信した入力をデコードし、仮想端末に書き込みます。
+*/
 func InputTerminal(pack modules.Packet) {
 	var err error
 	var uuid string
@@ -125,6 +150,10 @@ func InputTerminal(pack modules.Packet) {
 	session.lastPack = utils.Unix
 }
 
+/*
+端末のウィンドウサイズを変更します。
+pty.Setsize を使用して、行数や列数を設定します。
+*/
 func ResizeTerminal(pack modules.Packet) {
 	var uuid string
 	var cols, rows uint16
@@ -156,6 +185,10 @@ func ResizeTerminal(pack modules.Packet) {
 	})
 }
 
+/*
+仮想端末を終了します。
+仮想端末を閉じ、セッション情報を削除し、リソースを解放します。
+*/
 func KillTerminal(pack modules.Packet) {
 	var uuid string
 	var session *terminal
@@ -176,6 +209,10 @@ func KillTerminal(pack modules.Packet) {
 	session.rawEvent = nil
 }
 
+/*
+セッションがアクティブであることを確認します。
+最後のアクティビティ時間を更新し、セッションの状態を保持します。
+*/
 func PingTerminal(pack modules.Packet) {
 	var termUUID string
 	if val, ok := pack.GetData(`terminal`, reflect.String); !ok {
@@ -190,6 +227,10 @@ func PingTerminal(pack modules.Packet) {
 	session.lastPack = utils.Unix
 }
 
+/*
+仮想端末を強制的に終了する処理を行います。
+プロセスを強制終了し、リソースを解放します。
+*/
 func doKillTerminal(terminal *terminal) {
 	terminal.escape = true
 	if terminal.pty != nil {
@@ -203,6 +244,10 @@ func doKillTerminal(terminal *terminal) {
 	}
 }
 
+/*
+システムに存在するシェル（zsh、bash、sh）を検索し、そのパスを返します。
+デフォルトで sh にフォールバックします。
+*/
 func getTerminal(sh bool) string {
 	shellTable := []string{`zsh`, `bash`, `sh`}
 	if sh {
@@ -224,6 +269,10 @@ func getTerminal(sh bool) string {
 	return `sh`
 }
 
+/*
+端末セッションのヘルスチェックを行います。
+最後のパケット受信から一定時間（300秒）が経過しているセッションを終了します。
+*/
 func healthCheck() {
 	const MaxInterval = 300
 	for now := range time.NewTicker(30 * time.Second).C {

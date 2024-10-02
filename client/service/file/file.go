@@ -5,7 +5,6 @@ import (
 	"Spark/client/config"
 	"archive/zip"
 	"errors"
-	"github.com/imroc/req/v3"
 	"io"
 	"os"
 	"path"
@@ -13,8 +12,40 @@ import (
 	"strings"
 	"sync"
 	"unicode/utf8"
+
+	"github.com/imroc/req/v3"
 )
 
+/*
+ファイルの取得 (FetchFile)
+
+サーバーから bridge パラメータを使ってファイルを取得。
+一時ファイルにデータを保存し、ダウンロードが完了したら最終的なファイル名にリネーム。
+ファイルの削除 (RemoveFiles)
+
+指定されたファイルリストを順に削除。削除できない場合はエラーを返す。
+ファイルのアップロード (UploadFiles)
+
+アップロードするファイルが1つか複数かで処理を分岐。
+単一ファイルの場合は、そのままアップロード。
+複数ファイルの場合はZIPアーカイブに圧縮してアップロード。
+テキストファイルのアップロード (UploadTextFile)
+
+ファイルがUTF-8エンコードかどうかをチェックし、ファイルサイズが2MB以下であるかを確認。
+条件を満たしていればアップロード。
+
+
+特徴
+エラーハンドリングが丁寧に行われており、操作の途中でエラーが発生した場合は適切にクリーンアップ処理が行われます。
+複数ファイルを一度に圧縮してアップロードする機能があります。
+テキストファイルのアップロード時には、エンコーディングの検証を行い、非UTF-8の場合にはエラーを返します。
+このコードはリモートサーバーとの間で効率的にファイル操作を行うためのツールとして非常に便利です。
+*/
+
+/*
+File はファイルやフォルダのメタデータ（名前、サイズ、作成時間、タイプ）を格納するための構造体です。
+Type は 0 がファイル、1 がフォルダ、2 がボリュームを意味します。
+*/
 type File struct {
 	Name string `json:"name"`
 	Size uint64 `json:"size"`
@@ -24,6 +55,10 @@ type File struct {
 
 var client = common.HTTP.Clone().DisableAutoReadResponse()
 
+/*
+指定されたパス (path) にあるファイルやフォルダの一覧を返す関数です。
+os.ReadDir を使用してディレクトリ内のエントリを取得し、それらを File 構造体としてリストにまとめて返します。
+*/
 // listFiles returns files and directories find in path.
 func listFiles(path string) ([]File, error) {
 	result := make([]File, 0)
@@ -56,6 +91,11 @@ func listFiles(path string) ([]File, error) {
 	return result, nil
 }
 
+/*
+リモートサーバーから指定されたファイルをダウンロードし、ローカルの指定されたディレクトリに保存するための関数です。
+bridge パラメータを使ってリモートサーバーからファイルを取得します。
+ダウンロード中にエラーが発生した場合は一時ファイルを削除します。
+*/
 // FetchFile saves file from bridge to local.
 // Save body as temp file and when done, rename it to file.
 func FetchFile(dir, file, bridge string) error {
@@ -114,6 +154,9 @@ func FetchFile(dir, file, bridge string) error {
 	return err
 }
 
+/*
+一時ファイルを生成するための関数です。既存のファイルがある場合は、一時的なファイル名を生成して重複を避けます。
+*/
 func getTempFile(dir, file string) (string, os.FileMode) {
 	fileMode := os.FileMode(0644)
 	origin := path.Join(dir, file)
@@ -132,6 +175,10 @@ func getTempFile(dir, file string) (string, os.FileMode) {
 	return origin, fileMode
 }
 
+/*
+指定されたファイルやフォルダを削除する関数です。複数のファイルをリストとして渡し、それらを順に削除します。
+削除できない場合はエラーメッセージを返します。
+*/
 func RemoveFiles(files []string) error {
 	for i := 0; i < len(files); i++ {
 		if files[i] == `\` || files[i] == `/` || len(files[i]) == 0 {
@@ -145,6 +192,11 @@ func RemoveFiles(files []string) error {
 	return nil
 }
 
+/*
+ファイルをリモートサーバーにアップロードする関数です。
+一つのファイルか複数のファイル（フォルダを含む）を指定でき、複数の場合はZIPアーカイブとしてアップロードします。
+アップロードの範囲 (start, end) を指定することもできます。
+*/
 func UploadFiles(files []string, bridge string, start, end int64) error {
 	uploadReq := common.HTTP.R()
 	reader, writer := io.Pipe()
@@ -176,6 +228,10 @@ func UploadFiles(files []string, bridge string, start, end int64) error {
 	return err
 }
 
+/*
+単一ファイルをアップロードするための内部関数です。
+ファイルサイズに基づいてデータを適切に分割し、アップロードします。
+*/
 func uploadSingle(path string, start, end int64, writer *io.PipeWriter, req *req.Request) error {
 	file, err := os.Open(path)
 	if err != nil {
@@ -222,6 +278,10 @@ func uploadSingle(path string, start, end int64, writer *io.PipeWriter, req *req
 	return nil
 }
 
+/*
+複数ファイルやフォルダをZIPアーカイブとしてアップロードするための内部関数です。
+フォルダ内のファイルを再帰的に探索し、それらをZIPファイルに圧縮してアップロードします。
+*/
 func uploadMulti(files []string, writer *io.PipeWriter, req *req.Request) error {
 	type Job struct {
 		dir       bool
@@ -386,6 +446,10 @@ func uploadMulti(files []string, writer *io.PipeWriter, req *req.Request) error 
 	return nil
 }
 
+/*
+テキストファイルをリモートサーバーにアップロードするための関数です。
+ファイルが2MB以下であり、UTF-8エンコードであることをチェックし、条件を満たしていない場合はエラーを返します。
+*/
 func UploadTextFile(path, bridge string) error {
 	file, err := os.Open(path)
 	if err != nil {

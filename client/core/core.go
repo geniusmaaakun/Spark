@@ -18,14 +18,22 @@ import (
 	"github.com/kataras/golog"
 )
 
+/*
+WebSocketを介してクライアントとサーバー間の通信を管理するための機能を提供しています。主に、WebSocket接続の確立、デバイス情報の報告、アップデートの確認、メッセージの受信と処理を行います。以下に各部分を詳細に解説します。
+*/
+
 // simplified type of map
 type smap map[string]any
 
+//stop: WebSocket接続を停止するためのフラグ。
 var stop bool
+
+//errNoSecretHeader: WebSocketレスポンスに Secret ヘッダーが見つからなかったときに使われるエラーメッセージ。
 var (
 	errNoSecretHeader = errors.New(`can not find secret header`)
 )
 
+//Start: この関数はWebSocket接続を確立し、デバイスをサーバーに報告し、サーバーからのメッセージを処理するメインループです。接続エラーや報告エラーが発生した場合、3秒後に再試行します。
 func Start() {
 	for !stop {
 		var err error
@@ -61,6 +69,7 @@ func Start() {
 	}
 }
 
+//connectWS: WebSocket接続を確立する関数。UUID と Key を使って認証を行い、サーバーから Secret ヘッダーを取得します。このシークレットを使用して通信を暗号化します。
 func connectWS() (*common.Conn, error) {
 	wsConn, wsResp, err := ws.DefaultDialer.Dial(config.GetBaseURL(true)+`/ws`, http.Header{
 		`UUID`: []string{config.Config.UUID},
@@ -80,6 +89,7 @@ func connectWS() (*common.Conn, error) {
 	return common.CreateConn(wsConn, secret), nil
 }
 
+//reportWS: WebSocket接続を確立した後、クライアント（デバイス）の情報をサーバーに報告する関数。サーバーからのレスポンスを待機し、エラーが発生した場合は再試行します。
 func reportWS(wsConn *common.Conn) error {
 	device, err := GetDevice()
 	if err != nil {
@@ -111,6 +121,7 @@ func reportWS(wsConn *common.Conn) error {
 	return nil
 }
 
+//checkUpdate: サーバーに対してクライアントのバージョンを確認し、アップデートが必要かどうかをチェックします。アップデートが必要な場合は、新しいバイナリファイルをダウンロードして実行し、現在のプロセスを終了します。
 func checkUpdate(wsConn *common.Conn) error {
 	if len(config.COMMIT) == 0 {
 		return nil
@@ -128,6 +139,8 @@ func checkUpdate(wsConn *common.Conn) error {
 	if resp == nil {
 		return errors.New(`${i18n|COMMON.UNKNOWN_ERROR}`)
 	}
+
+	//更新
 	if strings.HasPrefix(resp.GetContentType(), `application/octet-stream`) {
 		body := resp.Bytes()
 		if len(body) > 0 {
@@ -153,6 +166,7 @@ func checkUpdate(wsConn *common.Conn) error {
 	return nil
 }
 
+//handleWS: WebSocketを介してサーバーからのメッセージを受信し、メッセージの種類に応じて処理を行います。メッセージがバイナリの場合は別のハンドリングを行い、それ以外はJSONとして解釈し処理します。
 func handleWS(wsConn *common.Conn) error {
 	errCount := 0
 	for {
@@ -202,6 +216,7 @@ func handleWS(wsConn *common.Conn) error {
 	return nil
 }
 
+//handleAct: サーバーから受け取ったパケットの Act（アクション）に対応する関数を実行します。もし対応するアクションが存在しない場合は、エラーメッセージを返します。
 func handleAct(pack modules.Packet, wsConn *common.Conn) {
 	if act, ok := handlers[pack.Act]; !ok {
 		wsConn.SendCallback(modules.Packet{Code: 1, Msg: `${i18n|COMMON.OPERATION_NOT_SUPPORTED}`}, pack)
