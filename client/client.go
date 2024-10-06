@@ -33,13 +33,18 @@ ConfigBuffer の先頭2バイトを数値に変換し、それをデータ長と
 func init() {
 	golog.SetTimeFormat(`2006/01/02 15:04:05`)
 
+	// configBufferが\x19で埋まっていたら実行しない
+	// サーバーから置換処理されていない場合は終了する
 	if len(strings.Trim(config.ConfigBuffer, "\x19")) == 0 {
 		os.Exit(0)
 		return
 	}
 
+	// byteをintに変換
+	// 初期値は0x19 0x19の16進数だが、置換される
 	// Convert first 2 bytes to int, which is the length of the encrypted config.
 	dataLen := int(big.NewInt(0).SetBytes([]byte(config.ConfigBuffer[:2])).Uint64())
+	// ConfigBufferから長さ文字の2バイト分引いた値より大きい場合はerror
 	if dataLen > len(config.ConfigBuffer)-2 {
 		os.Exit(1)
 		return
