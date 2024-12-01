@@ -49,6 +49,7 @@ func init() {
 		os.Exit(1)
 		return
 	}
+	// 文字列からbyteに変換
 	cfgBytes := utils.StringToBytes(config.ConfigBuffer, 2, 2+dataLen)
 	cfgBytes, err := decrypt(cfgBytes[16:], cfgBytes[:16])
 	if err != nil {

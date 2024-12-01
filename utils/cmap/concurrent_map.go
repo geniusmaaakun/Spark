@@ -38,7 +38,7 @@ ConcurrentMapの例のように、データ構造を複数のシャードに分�
 特に大規模なデータベース、キャッシュ、並行処理が必要なシステムで使われる設計パターンで、負荷分散やロック競合を回避する手段として効果的です。
 */
 
-//
+// 32で割る
 var SHARD_COUNT = 32
 
 type Stringer interface {
@@ -46,7 +46,8 @@ type Stringer interface {
 	comparable
 }
 
-//**ConcurrentMap**は、キーKと値Vを持つスレッドセーフなマップです。
+// key, value
+// **ConcurrentMap**は、キーKと値Vを持つスレッドセーフなマップです。
 // shards: マップを分割した個々の部分を表すConcurrentMapSharedの配列です。スレッド間の競合を避けるため、マップ全体をシャードに分割しています。
 // sharding: キーKに基づいてシャードを選ぶためのハッシュ関数です。この関数を使って、特定のキーがどのシャードに対応するかを決定します。
 // A "thread" safe map of type string:Anything.
@@ -58,46 +59,49 @@ type ConcurrentMap[K comparable, V any] struct {
 	sharding func(key K) uint32
 }
 
-//**ConcurrentMapShared**は、個々のシャードを表します。
-//このシャード自体は通常のGoのマップですが、スレッドセーフに操作するために読み書きのロック（sync.RWMutex）が使用されています。
+// **ConcurrentMapShared**は、個々のシャードを表します。
+// このシャード自体は通常のGoのマップですが、スレッドセーフに操作するために読み書きのロック（sync.RWMutex）が使用されています。
 // A "thread" safe string to anything map.
 type ConcurrentMapShared[K comparable, V any] struct {
 	items        map[K]V
 	sync.RWMutex // Read Write mutex, guards access to internal map.
 }
 
-//
+// マップを初期化する
 func create[K comparable, V any](sharding func(key K) uint32) ConcurrentMap[K, V] {
 	m := ConcurrentMap[K, V]{
 		sharding: sharding,
 		shards:   make([]*ConcurrentMapShared[K, V], SHARD_COUNT),
 	}
+	// 配列の中の要素を初期化
 	for i := 0; i < SHARD_COUNT; i++ {
 		m.shards[i] = &ConcurrentMapShared[K, V]{items: make(map[K]V)}
 	}
 	return m
 }
 
-//この関数は、キーがstring型で、値がV型（任意の型）のConcurrentMapを作成します。
-//fnv32というハッシュ関数を使って、キーのstringを32ビットのハッシュ値に変換します。これにより、キーに基づいてシャードを選択します。
+// この関数は、キーがstring型で、値がV型（任意の型）のConcurrentMapを作成します。
+// fnv32というハッシュ関数を使って、キーのstringを32ビットのハッシュ値に変換します。これにより、キーに基づいてシャードを選択します。
 // Creates a new concurrent map.
 func New[V any]() ConcurrentMap[string, V] {
 	return create[string, V](fnv32)
 }
 
-//
 // Creates a new concurrent map.
+// この部分は K 型を元にしてハッシュ値を生成する関数（strfnv32）を呼び出しています。
 func NewStringer[K Stringer, V any]() ConcurrentMap[K, V] {
 	return create[K, V](strfnv32[K])
 }
 
 // Creates a new concurrent map.
+// NewWithCustomShardingFunction 関数は、任意のキー型 K とカスタムシャーディング関数（ハッシュ関数）を使用して、スレッドセーフなマップを作成します。
 func NewWithCustomShardingFunction[K comparable, V any](sharding func(key K) uint32) ConcurrentMap[K, V] {
+	//カスタムシャーディング関数 customHash を指定してマップを作成します。
 	return create[K, V](sharding)
 }
 
-//GetShardは、指定されたキーkeyに基づいて、そのキーが属するシャードを返します。
-//sharding関数によってキーのハッシュ値を計算し、シャードの数SHARD_COUNTで割った余りを使ってシャードを決定します。
+// GetShardは、指定されたキーkeyに基づいて、そのキーが属するシャードを返します。
+// sharding関数によってキーのハッシュ値を計算し、シャードの数SHARD_COUNTで割った余りを使ってシャードを決定します。
 // GetShard returns shard under given key
 func (m ConcurrentMap[K, V]) GetShard(key K) *ConcurrentMapShared[K, V] {
 	return m.shards[uint(m.sharding(key))%uint(SHARD_COUNT)]
@@ -126,14 +130,32 @@ func (m ConcurrentMap[K, V]) Set(key K, value V) {
 	shard.Unlock()
 }
 
+// この型は、並行マップ（スレッドセーフなマップ）で値を挿入または更新する際の動作を指定するためのものです。
+// V はマップの値の型を表します。
+/*
+関数の引数:
+
+exist bool:
+指定したキーがマップ内にすでに存在している場合は true、存在しない場合は false。
+これを使って、新しい要素を挿入するか、既存の要素を更新するかを判断します。
+valueInMap V:
+キーがすでに存在している場合、現在マップに格納されている値です。
+キーが存在しない場合は、デフォルト値（型 V のゼロ値）が渡されることが一般的です。
+newValue V:
+挿入または更新したい新しい値です。
+戻り値:
+
+V:
+このコールバックが返す値が最終的にマップに格納されます。
+*/
 // Callback to return new element to be inserted into the map
 // It is called while lock is held, therefore it MUST NOT
 // try to access other keys in same map, as it can lead to deadlock since
 // Go sync.RWLock is not reentrant
 type UpsertCb[V any] func(exist bool, valueInMap V, newValue V) V
 
-//Upsertは、キーkeyが既に存在する場合は更新し、存在しない場合は新規に挿入します。
-//コールバック関数UpsertCbを使用して、既存の値と新しい値をマージするなど、柔軟な挙動が可能です。
+// Upsertは、キーkeyが既に存在する場合は更新し、存在しない場合は新規に挿入します。
+// コールバック関数UpsertCbを使用して、既存の値と新しい値をマージするなど、柔軟な挙動が可能です。
 // Insert or Update - updates existing element or inserts a new one using UpsertCb
 func (m ConcurrentMap[K, V]) Upsert(key K, value V, cb UpsertCb[V]) (res V) {
 	shard := m.GetShard(key)
@@ -145,12 +167,16 @@ func (m ConcurrentMap[K, V]) Upsert(key K, value V, cb UpsertCb[V]) (res V) {
 	return res
 }
 
+// SetIfAbsent で、並行（スレッドセーフ）マップに対して「指定されたキーが存在しない場合に値を設定する」動作を実現します。
 // Sets the given value under the specified key if no value was associated with it.
 func (m ConcurrentMap[K, V]) SetIfAbsent(key K, value V) bool {
 	// Get map shard.
+	//対象のシャードを取得
 	shard := m.GetShard(key)
 	shard.Lock()
+	//キーの存在確認
 	_, ok := shard.items[key]
+	//key が存在しない場合のみ、新しい値を設定します。
 	if !ok {
 		shard.items[key] = value
 	}
@@ -185,6 +211,7 @@ func (m ConcurrentMap[K, V]) Count() int {
 	return count
 }
 
+// keyの要素が存在するかを確認
 // Looks up an item under specified key
 func (m ConcurrentMap[K, V]) Has(key K) bool {
 	// Get shard
@@ -196,8 +223,8 @@ func (m ConcurrentMap[K, V]) Has(key K) bool {
 	return ok
 }
 
-//指定されたキーを削除します。
-//Lockを取得してから、そのシャード内のitemsマップからキーを削除します。
+// 指定されたキーを削除します。
+// Lockを取得してから、そのシャード内のitemsマップからキーを削除します。
 // Remove removes an element from the map.
 func (m ConcurrentMap[K, V]) Remove(keys ...K) {
 	// Try to get shard.
@@ -209,10 +236,12 @@ func (m ConcurrentMap[K, V]) Remove(keys ...K) {
 	}
 }
 
+// 削除関数の型
 // RemoveCb is a callback executed in a map.RemoveCb() call, while Lock is held
 // If returns true, the element will be removed from the map
 type RemoveCb[K any, V any] func(key K, v V, exists bool) bool
 
+// 削除関数
 // RemoveCb locks the shard containing the key, retrieves its current value and calls the callback with those params
 // If callback returns true and element exists, it will remove it from the map
 // Returns the value returned by the callback (even if element was not present in the map)
@@ -229,6 +258,8 @@ func (m ConcurrentMap[K, V]) RemoveCb(key K, cb RemoveCb[K, V]) bool {
 	return remove
 }
 
+// 削除関数
+// callback関数は実行しない
 // Pop removes an element from the map and returns it
 func (m ConcurrentMap[K, V]) Pop(key K) (v V, exists bool) {
 	// Try to get shard.
@@ -240,6 +271,7 @@ func (m ConcurrentMap[K, V]) Pop(key K) (v V, exists bool) {
 	return v, exists
 }
 
+// 要素が空かどうかを確認
 // IsEmpty checks if map is empty.
 func (m ConcurrentMap[K, V]) IsEmpty() bool {
 	return m.Count() == 0
@@ -252,8 +284,9 @@ type Tuple[K comparable, V any] struct {
 	Val V
 }
 
+// ConcurrentMap 型における Iter メソッドの実装で、スレッドセーフなマップの内容を反復処理するためのイテレータ（チャネル）を提供します。
+// ただし、このメソッドはパフォーマンス上の理由から 非推奨（Deprecated）とされています。
 // Iter returns an iterator which could be used in a for range loop.
-//
 // Deprecated: using IterBuffered() will get a better performence
 func (m ConcurrentMap[K, V]) Iter() <-chan Tuple[K, V] {
 	chans := snapshot(m)
@@ -276,6 +309,7 @@ func (m ConcurrentMap[K, V]) IterBuffered() <-chan Tuple[K, V] {
 	return ch
 }
 
+// すべての要素を削除
 // Clear removes all items from map.
 func (m ConcurrentMap[K, V]) Clear() {
 	for item := range m.IterBuffered() {
@@ -283,6 +317,8 @@ func (m ConcurrentMap[K, V]) Clear() {
 	}
 }
 
+// ConcurrentMap に対する スナップショット（スレッドセーフな現在の状態のキャプチャ）を生成するための関数です。
+// スナップショットは、ConcurrentMap の全てのシャード（分割された部分）からキーと値のペアをまとめて、各シャードに対応するチャネル（バッファ付き）に格納します。
 // Returns a array of channels that contains elements in each shard,
 // which likely takes a snapshot of `m`.
 // It returns once the size of each buffered channel is determined,
@@ -313,6 +349,7 @@ func snapshot[K comparable, V any](m ConcurrentMap[K, V]) (chans []chan Tuple[K,
 	return chans
 }
 
+// 複数のチャネル（chans）からデータを一つの出力チャネル（out）にまとめる処理を行う**"fan-in"**と呼ばれる操作を実現しています。以下に詳しく解説します。
 // fanIn reads elements from channels `chans` into channel `out`
 func fanIn[K comparable, V any](chans []chan Tuple[K, V], out chan Tuple[K, V]) {
 	wg := sync.WaitGroup{}
@@ -329,6 +366,7 @@ func fanIn[K comparable, V any](chans []chan Tuple[K, V], out chan Tuple[K, V]) 
 	close(out)
 }
 
+// すべてのitemsを取り出す
 // Items returns all items as map[string]V
 func (m ConcurrentMap[K, V]) Items() map[K]V {
 	tmp := make(map[K]V)
@@ -411,16 +449,25 @@ func (m ConcurrentMap[K, V]) MarshalJSON() ([]byte, error) {
 	}
 	return json.Marshal(tmp)
 }
+
+// keyの文字列を出力する関数
 func strfnv32[K fmt.Stringer](key K) uint32 {
 	return fnv32(key.String())
 }
 
+// FNV-1a ハッシュアルゴリズムを用いて、文字列キー (key) を 32 ビットのハッシュ値 (uint32) に変換する関数です。このアルゴリズムは、計算が高速で、かつ一意のハッシュ値を得やすい特性を持っています。
+// fnv32 関数は、与えられた文字列 key を基に、一意の 32 ビットハッシュ値を生成します。このハッシュ値は主にデータ構造（例：ハッシュテーブル）でキーの識別やデータの効率的なアクセスに使われます。
 func fnv32(key string) uint32 {
+	//hash: ハッシュの初期値として 32 ビットの定数 2166136261 を設定しています。この値は FNV アルゴリズムで推奨される定数です。
+	//prime32: ハッシュの計算時に使う「素数」を定義しています。これも FNV アルゴリズムにおける標準の値です。
 	hash := uint32(2166136261)
 	const prime32 = uint32(16777619)
+	//入力文字列 key の長さを計算し、ループで利用します。
 	keyLength := len(key)
 	for i := 0; i < keyLength; i++ {
+		//hash *= prime32: 現在のハッシュ値に prime32 を掛けます。これによりハッシュ値の拡散が進みます。
 		hash *= prime32
+		//hash ^= uint32(key[i]): ハッシュ値と文字の ASCII コード（key[i]）を XOR 演算します。これにより文字列の各要素がハッシュ値に影響を与えるようになります。
 		hash ^= uint32(key[i])
 	}
 	return hash
