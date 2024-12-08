@@ -67,7 +67,6 @@ var BuiltPath = `./built/%v_%v`
 init関数は、パッケージが初期化されると自動的に呼び出されます。ここでは以下の処理を行います。
 
 golog.SetTimeFormat: ログのタイムフォーマットを設定します。
-
 */
 func init() {
 	golog.SetTimeFormat(`2006/01/02 15:04:05`)
@@ -91,8 +90,12 @@ func init() {
 	flag.UintVar(&logDays, `log-days`, 7, `max days of logs, default: 7`)
 	flag.Parse()
 
+	// configパスが設定されている場合
 	if len(configPath) > 0 {
+		//設定ファイルがconfig.jsonから読み込まれます。ファイルが見つからない場合、デフォルトのConfig.jsonが試され、それでも失敗すればエラーログを出力して終了します。
+		// configの読み込み
 		configData, err = os.ReadFile(configPath)
+		// 読み込みができない場合
 		if err != nil {
 			configData, err = os.ReadFile(`Config.json`)
 			if err != nil {
@@ -104,8 +107,10 @@ func init() {
 				return
 			}
 		}
-		//設定ファイルがconfig.jsonから読み込まれます。ファイルが見つからない場合、デフォルトのConfig.jsonが試され、それでも失敗すればエラーログを出力して終了します。
+		// 構造体に変換
 		err = utils.JSON.Unmarshal(configData, &Config)
+
+		// error出力して終了
 		if err != nil {
 			fatal(map[string]any{
 				`event`:  `CONFIG_PARSE`,
@@ -145,6 +150,7 @@ func init() {
 		})
 		return
 	}
+
 	//ソルトが24バイトに満たない場合、25というバイト値で埋めて24バイトに調整します。
 	Config.SaltBytes = []byte(Config.Salt)
 	Config.SaltBytes = append(Config.SaltBytes, bytes.Repeat([]byte{25}, 24)...)
@@ -153,7 +159,7 @@ func init() {
 	golog.SetLevel(utils.If(len(Config.Log.Level) == 0, `info`, Config.Log.Level))
 }
 
-//fatal関数は、致命的なエラーが発生した際にエラーメッセージをJSON形式で生成し、golog.Fatalを使って出力します。出力後、プログラムは終了します。
+// fatal関数は、致命的なエラーが発生した際にエラーメッセージをJSON形式で生成し、golog.Fatalを使って出力します。出力後、プログラムは終了します。
 func fatal(args map[string]any) {
 	output, _ := utils.JSON.MarshalToString(args)
 	golog.Fatal(output)

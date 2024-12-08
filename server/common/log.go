@@ -42,15 +42,20 @@ setLogDst関数:
 初回実行後、毎日午前0時にログファイルが新しくなります。
 */
 func init() {
+	// ログの書き込み先の設定
 	setLogDst := func() {
 		var err error
+		// Writerの設定
 		if logWriter != nil {
 			logWriter.Close()
 		}
+		// 出力先を標準出力に指定
+		// ログのレベルがdisable、またはシステムが停止状態（disposed）の場合、ログを標準出力（os.Stdout）に設定し、処理を終了します。
 		if config.Config.Log.Level == `disable` || disposed {
 			golog.SetOutput(os.Stdout)
 			return
 		}
+		// 出力先の設定
 		os.Mkdir(config.Config.Log.Path, 0666)
 		now := utils.Now.Add(time.Minute)
 		logFile := fmt.Sprintf(`%s/%s.log`, config.Config.Log.Path, now.Format(`2006-01-02`))
@@ -60,17 +65,28 @@ func init() {
 		}
 		golog.SetOutput(io.MultiWriter(os.Stdout, logWriter))
 
+		// 古いログの削除？
+		// 保持期間（config.Config.Log.Days）を過ぎたログファイルを削除します。
+		// 現在のタイムスタンプから指定日数（Days）を引き、削除対象の日付を計算します。
 		staleDate := time.Unix(now.Unix()-int64(config.Config.Log.Days*86400), 0)
 		staleLog := fmt.Sprintf(`%s/%s.log`, config.Config.Log.Path, staleDate.Format(`2006-01-02`))
 		os.Remove(staleLog)
 	}
 	setLogDst()
+
+	// ログの定期的な切り替え
 	go func() {
+		// 	初期待機:
+		// 現在の時刻が次の日の00:00:00になるまでの秒数（waitSecs）を計算します。
+		// その秒数だけ待機します。
 		waitSecs := 86400 - (utils.Now.Hour()*3600 + utils.Now.Minute()*60 + utils.Now.Second())
 		if waitSecs > 0 {
 			<-time.After(time.Duration(waitSecs) * time.Second)
 		}
 		setLogDst()
+		// 日次更新:
+		// 毎日（24時間ごと）setLogDstを呼び出してログファイルを切り替えます。
+		// time.NewTickerを使用して24時間ごとに処理を繰り返します。
 		for range time.NewTicker(time.Second * 86400).C {
 			setLogDst()
 		}
@@ -153,7 +169,7 @@ func Debug(ctx any, event, status, msg string, args map[string]any) {
 	golog.Debugf(getLog(ctx, event, status, msg, args))
 }
 
-//**CloseLog**は、ログシステムを終了し、ログの出力先を標準出力（os.Stdout）に戻します。また、現在のログファイルが開かれている場合は、それをクローズします。
+// **CloseLog**は、ログシステムを終了し、ログの出力先を標準出力（os.Stdout）に戻します。また、現在のログファイルが開かれている場合は、それをクローズします。
 func CloseLog() {
 	disposed = true
 	golog.SetOutput(os.Stdout)

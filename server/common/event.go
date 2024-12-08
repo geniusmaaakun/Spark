@@ -11,23 +11,26 @@ import (
 イベントベースのコールバック管理を行うための機能を提供しています。
 具体的には、特定のイベントが発生した際に、そのイベントに紐付けられたコールバック関数を実行する仕組みを実現しています。イベントは一度だけ実行されるもの（AddEventOnce）と、繰り返し実行可能なもの（AddEvent）の2種類があります。
 
-
 使い方の例
 一度だけ発生するイベントの追加
 
 go
 コードをコピーする
-AddEventOnce(func(pack modules.Packet, session *melody.Session) {
-    fmt.Println("Received event:", pack)
-}, "session-uuid", "unique-event-trigger", 10*time.Second)
+
+	AddEventOnce(func(pack modules.Packet, session *melody.Session) {
+	    fmt.Println("Received event:", pack)
+	}, "session-uuid", "unique-event-trigger", 10*time.Second)
+
 このイベントは10秒以内に発生しなければ削除されます。発生すればコールバック関数が実行されます。
 繰り返し発生するイベントの追加
 
 go
 コードをコピーする
-AddEvent(func(pack modules.Packet, session *melody.Session) {
-    fmt.Println("Event triggered:", pack)
-}, "session-uuid", "repeating-event-trigger")
+
+	AddEvent(func(pack modules.Packet, session *melody.Session) {
+	    fmt.Println("Event triggered:", pack)
+	}, "session-uuid", "repeating-event-trigger")
+
 イベントの呼び出し
 
 go
@@ -39,11 +42,9 @@ pack.Eventに基づいてイベントがトリガーされ、対応するコー�
 go
 コードをコピーする
 RemoveEvent("unique-event-trigger", true)
-
-
-イベントベースの非同期コールバックシステムを提供しています。特定のトリガーを使用してイベントを登録し、イベントが発生した際にコールバック関数を呼び出します。また、タイムアウトやイベントの一度限りの実行などもサポートしています。
 */
 
+// イベントベースの非同期コールバックシステムを提供しています。特定のトリガーを使用してイベントを登録し、イベントが発生した際にコールバック関数を呼び出します。また、タイムアウトやイベントの一度限りの実行などもサポートしています。
 type EventCallback func(modules.Packet, *melody.Session)
 
 /*
@@ -76,6 +77,7 @@ func CallEvent(pack modules.Packet, session *melody.Session) {
 	if len(pack.Event) == 0 {
 		return
 	}
+	// eventからコールバック関数をmapから取得
 	ev, ok := events.Get(pack.Event)
 	if !ok {
 		return
@@ -83,6 +85,7 @@ func CallEvent(pack modules.Packet, session *melody.Session) {
 	if session != nil && session.UUID != ev.connection {
 		return
 	}
+	// 実行
 	ev.callback(pack, session)
 	if ev.finish != nil {
 		ev.finish <- true
@@ -90,7 +93,8 @@ func CallEvent(pack modules.Packet, session *melody.Session) {
 }
 
 /*
-**AddEventOnce**は、一度だけ呼び出されるイベントを追加します。このイベントは、指定されたtriggerが発生するか、タイムアウトするまで待機します。
+**AddEventOnce**は、一度だけ呼び出されるイベントを追加します。
+このイベントは、指定されたtriggerが発生するか、タイムアウトするまで待機します。
 イベントが完了（finish）または削除（remove）されたら、イベントを削除して結果を返します。
 タイムアウトが発生した場合もイベントは削除され、falseを返します。
 */
@@ -104,9 +108,12 @@ func AddEventOnce(fn EventCallback, connUUID, trigger string, timeout time.Durat
 		finish:     make(chan bool),
 		remove:     make(chan bool),
 	}
+	// eventにコールバック関数の追加
 	events.Set(trigger, ev)
 	defer close(ev.remove)
 	defer close(ev.finish)
+
+	//
 	select {
 	case ok := <-ev.finish:
 		events.Remove(trigger)
@@ -120,7 +127,7 @@ func AddEventOnce(fn EventCallback, connUUID, trigger string, timeout time.Durat
 	}
 }
 
-//*AddEvent**は、繰り返し呼び出せるイベントを追加します。AddEventOnceと違って、一度呼ばれてもそのまま残り続けます。
+// *AddEvent**は、繰り返し呼び出せるイベントを追加します。AddEventOnceと違って、一度呼ばれてもそのまま残り続けます。
 // AddEvent adds a new event and client can call back
 // the event with the given event trigger.
 func AddEvent(fn EventCallback, connUUID, trigger string) {
@@ -131,7 +138,7 @@ func AddEvent(fn EventCallback, connUUID, trigger string) {
 	events.Set(trigger, ev)
 }
 
-//**RemoveEvent**は、指定されたtriggerに関連付けられたイベントを削除します。ok引数を渡すことで、削除時に特定のステータスを設定できます（trueやfalseを指定可能）。
+// **RemoveEvent**は、指定されたtriggerに関連付けられたイベントを削除します。ok引数を渡すことで、削除時に特定のステータスを設定できます（trueやfalseを指定可能）。
 // 削除された後、関連付けられたev.removeチャネルに通知が送信されます。
 // RemoveEvent deletes the event with the given event trigger.
 // The ok will be returned to caller if the event is temp (only once).
@@ -151,7 +158,7 @@ func RemoveEvent(trigger string, ok ...bool) {
 	ev = nil
 }
 
-//**HasEvent**は、指定されたtriggerが存在するかどうかを確認する関数です。イベントが存在すればtrueを返します。
+// **HasEvent**は、指定されたtriggerが存在するかどうかを確認する関数です。イベントが存在すればtrueを返します。
 // HasEvent returns if the event exists.
 func HasEvent(trigger string) bool {
 	return events.Has(trigger)
