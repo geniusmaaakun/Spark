@@ -64,11 +64,16 @@ WebSocket接続のハンドリング: クライアントとのリアルタイム
 あるクライアントが多くの失敗した認証試行を行うと、そのクライアントのIPアドレスが blocked に追加され、一定期間そのクライアントからのリクエストがブロックされます。
 blocked に保存されている値を定期的にチェックし、ブロック解除のタイミングが来たらそのエントリを削除します。
 */
+
+// IP アドレスを保持する。認証に失敗したら追加する
 var blocked = cmap.New[int64]()
+
+// ?
 var lastRequest = time.Now().Unix()
 
 /*
-説明: サーバーのエントリーポイントです。以下の手順でサーバーをセットアップしています。
+説明:
+サーバーのエントリーポイントです。以下の手順でサーバーをセットアップしています。
 静的リソースの読み込み (webFS): サーバーが提供するWebコンテンツ（HTML/CSS/JSファイルなど）を読み込みます。
 ルーティングの初期化 (handler.InitRouter): /api パスの下にあるAPIエンドポイントを初期化し、クライアントとのWebSocket接続のための /ws エンドポイントも設定します。
 WebSocketのハンドリング (wsOnConnect, wsOnMessage, wsOnMessageBinary, wsOnDisconnect): WebSocket接続のイベントを処理します。
@@ -289,7 +294,7 @@ func wsOnDisconnect(session *melody.Session) {
 	common.Devices.Remove(session.UUID)
 }
 
-//説明: 一定間隔でクライアントにPingメッセージを送信し、応答がないクライアントを切断します。
+// 説明: 一定間隔でクライアントにPingメッセージを送信し、応答がないクライアントを切断します。
 func wsHealthCheck(container *melody.Melody) {
 	const MaxIdleSeconds = 150
 	const MaxPingInterval = 60
@@ -342,7 +347,7 @@ func wsHealthCheck(container *melody.Melody) {
 	}
 }
 
-//説明: 個別のデバイスにPingを送り、応答時間（レイテンシ）を計測します。
+// 説明: 個別のデバイスにPingを送り、応答時間（レイテンシ）を計測します。
 func pingDevice(s *melody.Session) {
 	t := time.Now().UnixMilli()
 	trigger := utils.GetStrUUID()
@@ -360,7 +365,6 @@ func pingDevice(s *melody.Session) {
 クッキー: Authorization クッキーをチェックし、既に認証済みか確認します。
 Basic認証: 認証されていない場合、Basic認証を行い、成功したら Authorization クッキーをセットします。
 ブロックリスト: 認証に失敗したクライアントを一時的にブロックします。
-
 */
 func checkAuth() gin.HandlerFunc {
 	// Token as key and update timestamp as value.
@@ -442,7 +446,7 @@ func checkAuth() gin.HandlerFunc {
 	}
 }
 
-//説明: クライアントが gzip圧縮 に対応しているか確認し、対応していればgzip圧縮された静的ファイルを提供します。
+// 説明: クライアントが gzip圧縮 に対応しているか確認し、対応していればgzip圧縮された静的ファイルを提供します。
 func serveGzip(ctx *gin.Context, statikFS http.FileSystem) bool {
 	headers := ctx.Request.Header
 	filename := path.Clean(ctx.Request.RequestURI)
