@@ -35,21 +35,58 @@ Goを使ったファイル管理のためのAPIを実装しており、リモー
 */
 // RemoveDeviceFiles will try to get send a packet to
 // client and let it upload the file specified.
+//リモートデバイス上の指定されたファイルを削除するための操作を処理します。この操作は、特定のデバイスにリクエストを送信し、その応答を確認することで実現されます。
 func RemoveDeviceFiles(ctx *gin.Context) {
+	//リクエストデータのバインド
+	//クライアントから送信されたリクエストデータを form 構造体にバインドします。
+	//フィールド Files は、削除対象のファイルパスの配列です。
 	var form struct {
 		Files []string `json:"files" yaml:"files" form:"files" binding:"required"`
 	}
+	//リクエストデータの検証を行い、バインドできた場合に ok = true を返します。
 	target, ok := utility.CheckForm(ctx, &form)
+	//検証に失敗した場合、関数は終了します。
 	if !ok {
 		return
 	}
+	//ファイルリストの確認
+	//Files 配列が空でないか確認します。
 	if len(form.Files) == 0 {
+		//空の場合はクライアントにエラーレスポンス (400 Bad Request) を返し、処理を終了します。
 		ctx.AbortWithStatusJSON(http.StatusBadRequest, modules.Packet{Code: -1, Msg: `${i18n|COMMON.INVALID_PARAMETER}`})
 		return
 	}
+	//リクエストの識別用に UUID (trigger) を生成します。
 	trigger := utils.GetStrUUID()
+	// リモートデバイスへの削除リクエスト
+	/*
+		リクエストパケット (modules.Packet) を作成します。
+		Act: FILES_REMOVE:
+			削除操作を表すアクション名。
+		Data: gin.H{files: form.Files}:
+			削除対象のファイルリストを含むデータ。
+		Event: trigger:
+			このリクエストに対応する応答を識別するためのトリガー。
+	*/
+	//リクエストの送信: common.SendPackByUUID を使用して、ターゲットデバイスにリクエストを送信します。
 	common.SendPackByUUID(modules.Packet{Act: `FILES_REMOVE`, Data: gin.H{`files`: form.Files}, Event: trigger}, target)
+
+	//応答イベントの処理
+	/*
+		応答イベントの登録:
+		common.AddEventOnce を使用して、削除リクエストに対応する応答を待ちます。
+		応答は trigger を基に識別されます。
+		応答待ちのタイムアウトは 5 秒 (5*time.Second) に設定されています。
+	*/
 	ok = common.AddEventOnce(func(p modules.Packet, _ *melody.Session) {
+		/*
+			応答の処理:
+			応答パケット (modules.Packet) を受け取ると、Code フィールドで結果を判定します。
+			失敗 (Code != 0):
+			エラーメッセージをログに記録し、クライアントに 500 Internal Server Error を返します。
+			成功 (Code == 0):
+			成功メッセージをログに記録し、クライアントに 200 OK を返します。
+		*/
 		if p.Code != 0 {
 			common.Warn(ctx, `REMOVE_FILES`, `fail`, p.Msg, map[string]any{
 				`files`: form.Files,
@@ -62,12 +99,28 @@ func RemoveDeviceFiles(ctx *gin.Context) {
 			ctx.JSON(http.StatusOK, modules.Packet{Code: 0})
 		}
 	}, target, trigger, 5*time.Second)
+
+	//タイムアウト処理
+	//応答がタイムアウトした場合:
+	//エラーログを記録し、クライアントに 504 Gateway Timeout を返します。
 	if !ok {
 		common.Warn(ctx, `REMOVE_FILES`, `fail`, `timeout`, map[string]any{
 			`files`: form.Files,
 		})
 		ctx.AbortWithStatusJSON(http.StatusGatewayTimeout, modules.Packet{Code: 1, Msg: `${i18n|COMMON.RESPONSE_TIMEOUT}`})
 	}
+
+	/*
+		実行の流れ
+		リクエストデータの検証:
+		クライアントから受け取ったファイルリスト (Files) を検証します。
+		リモートデバイスへの削除リクエスト:
+		指定されたファイルリストをターゲットデバイスに送信します。
+		応答の処理:
+		ターゲットデバイスからの応答を受け取り、削除が成功したかを確認します。
+		クライアントへのレスポンス:
+		成功した場合は 200 OK を、失敗またはタイムアウトした場合は適切なエラーレスポンスを返します。
+	*/
 }
 
 /*
