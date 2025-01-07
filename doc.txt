@@ -1,2 +1,10 @@
 README通りやればビルド可能。
 config.jsonをサーバーのディレクトリと同じ場所に設置する必要あり
+
+
+処理フロー
+ws connection
+server <- client
+
+remote access
+browser -> server -> client
