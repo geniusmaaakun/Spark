@@ -1,45 +1,103 @@
+//createRef:
+// DOM 要素や子コンポーネントへの参照を作成するための関数。
+// ターミナル要素に直接アクセスするために使用される可能性があります。
+//useCallback:
+// パフォーマンス最適化のためにコールバック関数をメモ化
 import React, {createRef, useCallback, useState} from "react";
+//Ant Design のコンポーネント
 import {Button, Dropdown, Menu, message, Space} from "antd";
+//xterm.js:
+// Web ターミナルを実現するためのライブラリ。
+// Terminal: ターミナルインスタンスを作成。
 import {Terminal} from "xterm";
+//xterm-addon-web-links:
+// ターミナル内の URL をクリック可能なリンクとして扱うアドオン。
 import {WebLinksAddon} from "xterm-addon-web-links";
+//xterm-addon-fit:
+// ターミナルを親コンテナのサイズに合わせるアドオン。
 import {FitAddon} from "xterm-addon-fit";
+//lodash/debounce:
+// 高頻度で発生するイベント (例: ウィンドウサイズの変更) の実行回数を制御するためのユーティリティ関数。
+// ここではターミナルのリサイズ処理で使用される可能性があります。
 import debounce from 'lodash/debounce';
+//wcwidth:
+// Unicode 文字の表示幅を計算するライブラリ。
+// ターミナル内で文字の幅を正しく計算するために必要です。
 import wcwidth from 'wcwidth';
+//xterm.css:
+// ターミナルのデフォルトスタイル
 import "xterm/css/xterm.css";
+//i18n:
+// 多言語対応のためのローカライズモジュール。
+// ターミナル UI やメッセージのテキストを翻訳するために使用。
 import i18n from "../../locale/locale";
 import {
 	decrypt, encrypt, genRandHex, getBaseURL,
 	hex2ua, str2hex, str2ua, translate,
 	ua2hex, ua2str
 } from "../../utils/utils";
+//ドラッグ可能なモーダル
 import DraggableModal from "../modal";
+//ZMODEM:
+// ファイル転送プロトコル。
+// ターミナル経由でのファイル送受信をサポート。
+// zmodem.js は、ブラウザ上で ZMODEM プロトコルを実装したライブラリ。
 const Zmodem = require("../../vendors/zmodem.js/zmodem");
 
-let zsentry = null;
-let zsession = null;
 
-let webLinks = null;
-let fit = null;
-let term = null;
-let termEv = null;
-let secret = null;
+// 全体の目的
+// ターミナルの表示:
+// xterm.js を利用して、ブラウザ上でターミナルを動作させます。
+// ファイル送受信:
+// ZMODEM プロトコルを用いて、ファイルの送受信をサポート。
+// キーボード操作の拡張:
+// ExtKeyboard を提供し、特定のキー (例: Ctrl, F1~F12) や矢印キーなどの特殊キー操作を実現。
+// リアルタイム通信:
+// WebSocket を使用してリモートデバイスと通信し、ターミナル入力/出力を処理。
 
-let ws = null;
-let ctrl = false;
-let conn = false;
-let ticker = 0;
-let buffer = {content: '', output: ''};
+// まとめ
+//リアルタイム通信:
+// WebSocket を使用してリモートターミナルを操作。
+// ファイル送受信:
+// ZMODEM を使ったシームレスなファイル転送。
+// UI 補助:
+// 特殊キーをボタンとして提供し、操作性を向上。
+// クロスプラットフォーム対応:
+// Windows と Unix 系 OS で異なる動作をサポート。
+// このコンポーネントは、ブラウザ上で完全なリモートターミナル操作を実現する強力なツールです。
 
+//グローバル変数でターミナルや通信状態を管理。
+let zsentry = null;  // ZMODEM セッションのエントリポイント
+let zsession = null; // 現在の ZMODEM セッション
+
+let webLinks = null; // xterm-addon-web-links アドオン
+let fit = null;      // xterm-addon-fit アドオン
+let term = null;     // ターミナルインスタンス
+let termEv = null;   // ターミナルのイベントリスナー
+let secret = null;   // 暗号化用のシークレットキー
+
+let ws = null;       // WebSocket インスタンス
+let ctrl = false;    // Ctrl キーの状態
+let conn = false;    // WebSocket の接続状態
+let ticker = 0;      // 定期的な PING の送信タイマー
+let buffer = {content: '', output: ''}; // 入出力のバッファ
+
+//TerminalModal
+//モーダル内にターミナルをレンダリングします。
 function TerminalModal(props) {
 	let os = props.device.os;
 	let extKeyRef = createRef();
+
+	//ターミナルの初期化
 	let termRef = useCallback(e => {
 		if (e !== null) {
 			termRef.current = e;
 			if (props.open) {
-				secret = hex2ua(genRandHex(32));
-				fit = new FitAddon();
-				webLinks = new WebLinksAddon();
+				secret = hex2ua(genRandHex(32)); // 暗号化キー生成
+				//アドオンとは：ソフトウェアに新しい機能を追加するためのプログラムやその手続きです。拡張機能とも呼ばれます
+				fit = new FitAddon(); // ターミナルを親要素に合わせるアドオン
+				webLinks = new WebLinksAddon(); // URL をクリック可能にするアドオン
+				// ターミナルの設定
 				term = new Terminal({
 					convertEol: true,
 					allowProposedApi: true,
@@ -50,11 +108,11 @@ function TerminalModal(props) {
 					fontSize: 16,
 					logLevel: "off",
 				});
-				termEv = initialize(null);
-				term.loadAddon(fit);
-				term.open(termRef.current);
-				fit.fit();
-				term.clear();
+				termEv = initialize(null);      // 初期化関数を呼び出す
+				term.loadAddon(fit);            // アドオンをロード
+				term.open(termRef.current);     // ターミナルを DOM にレンダリング
+				fit.fit();                      // サイズ調整
+				term.clear();                   // ターミナルをクリア
 				term.loadAddon(webLinks);
 
 				window.onresize = onResize;
@@ -93,6 +151,10 @@ function TerminalModal(props) {
 		ctrl = false;
 	}
 
+	//xterm.js を使用してターミナルを作成・初期化。
+	// WebSocket を利用してリモートデバイスと接続。
+	//WebSocket を開き、ターミナルの入力/出力をリアルタイムでリモートに送受信。
+	// オペレーティングシステムに応じて異なる入力処理を設定。
 	function initialize(ev) {
 		ev?.dispose();
 		buffer = {content: '', output: ''};
@@ -100,20 +162,24 @@ function TerminalModal(props) {
 		// Windows doesn't support pty, so we still use traditional way.
 		// And we need to handle arrow events manually.
 		if (os === 'windows') {
-			termEv = term.onData(onWindowsInput(buffer));
+			termEv = term.onData(onWindowsInput(buffer));  // Windows 用の入力処理
 		} else {
 			initZmodem();
-			termEv = term.onData(onUnixOSInput(buffer));
+			termEv = term.onData(onUnixOSInput(buffer)); // Unix 系で ZMODEM を初期化
 		}
 
 		ws = new WebSocket(getBaseURL(true, `api/device/terminal?device=${props.device.id}&secret=${ua2hex(secret)}`));
 		ws.binaryType = 'arraybuffer';
+
+		// 接続状態を更新
 		ws.onopen = () => {
 			conn = true;
 		}
+		// メッセージ処理
 		ws.onmessage = (e) => {
 			onWsMessage(e.data, buffer);
 		}
+		// 切断処理
 		ws.onclose = (e) => {
 			if (conn) {
 				conn = false;
@@ -126,6 +192,7 @@ function TerminalModal(props) {
 				}
 			}
 		}
+		// エラー処理
 		ws.onerror = (e) => {
 			console.error(e);
 			if (conn) {
@@ -143,6 +210,8 @@ function TerminalModal(props) {
 		}
 		return termEv;
 	}
+
+
 	function onWsMessage(data) {
 		data = new Uint8Array(data);
 		if (data[0] === 34 && data[1] === 22 && data[2] === 19 && data[3] === 17 && data[4] === 21 && data[5] === 0) {
@@ -206,6 +275,10 @@ function TerminalModal(props) {
 		term.write(data);
 	}
 
+	//入力処理
+	//Windows:
+	// コマンド履歴やカーソル移動を管理。
+	// 特定の入力イベント (例: 上矢印キーで履歴を辿る) に対応。
 	function onWindowsInput(buffer) {
 		let cmd = '';
 		let index = 0;
@@ -322,6 +395,10 @@ function TerminalModal(props) {
 			term.write('\b'.repeat(wcwidth(cmd)));
 		}
 	}
+
+	//入力処理
+	//Unix 系:
+	// 直接 WebSocket に入力を送信。
 	function onUnixOSInput(_) {
 		return function (e) {
 			if (!conn) {
@@ -334,6 +411,10 @@ function TerminalModal(props) {
 			sendUnixOSInput(e);
 		};
 	}
+
+	//ファイル送受信 (ZMODEM)
+	//ZMODEM を初期化し、ファイルの送受信を管理。
+	// uploadFile と downloadFile で、それぞれ送信と受信の処理を行う。
 	function initZmodem() {
 		const clear = () => {
 			extKeyRef.current.setFileSelect(false);
@@ -344,13 +425,18 @@ function TerminalModal(props) {
 		zsentry = new Zmodem.Sentry({
 			on_retract: () => {},
 			on_detect: detection => {
+				// 既存セッションを閉じる
 				if (zsession !== null) {
 					clear();
 				}
+				// セッションを開始
 				zsession = detection.confirm();
+
 				if (zsession.type === 'send') {
+					// ファイル送信
 					uploadFile(zsession);
 				} else {
+					// ファイル受信
 					downloadFile(zsession);
 				}
 			},
@@ -551,6 +637,9 @@ function TerminalModal(props) {
 		if (focus) term?.focus?.();
 	}
 
+	//モーダルのレンダリング
+	//モーダル内にターミナル (termRef) を描画。
+	// キーボード操作を補助する ExtKeyboard を追加。
 	return (
 		<DraggableModal
 			draggable={true}
@@ -587,6 +676,9 @@ function TerminalModal(props) {
 	)
 }
 
+//特殊キー入力の拡張 (ExtKeyboard)
+//特定のキー (Ctrl, ESC, 矢印キーなど) をターミナル操作用のボタンとして表示。
+// メニューから F1~F12 や特殊キーを選択可能。
 class ExtKeyboard extends React.Component {
 	constructor(props) {
 		super(props);

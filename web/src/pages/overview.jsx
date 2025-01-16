@@ -150,6 +150,8 @@ function overview(props) {
 		setting: true,
 	};
 	const tableRef = useRef();
+
+	// componentを読み込む
 	const loadComponent = (component, callback) => {
 		let element = null;
 		component = component.toLowerCase();

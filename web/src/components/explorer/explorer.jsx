@@ -12,6 +12,28 @@ import FileUploader from "./uploader";
 import AceBuilds from "ace-builds";
 import "./explorer.css";
 
+// React を使用して実装された ファイルブラウザ コンポーネント (FileBrowser) です。
+// このコンポーネントは、リモートデバイス上のファイルやフォルダを操作するためのインターフェースを提供します。
+
+// 全体の目的
+// ファイルの操作:
+// ファイル一覧の表示、ダウンロード、削除、アップロード。
+// テキストファイルの編集、画像ファイルのプレビュー。
+// UI 機能:
+// ProTable を利用してファイル一覧を表形式で表示。
+// パンくずリスト (Breadcrumb) を使用して、現在のディレクトリを可視化。
+// モーダルウィンドウやポップアップメニューを使用して直感的な操作を実現。
+
+
+// このコンポーネントは、直感的な UI でリモートデバイスのファイルを管理できる高度なファイルブラウザです。
+// 主要機能:
+// ファイルの表示、ダウンロード、削除、アップロード。
+// テキストファイルの編集、画像ファイルのプレビュー。
+// パンくずリストによるディレクトリナビゲーション。
+// ProTable による効率的なリスト表示。
+// バックエンドとの連携:
+// API 経由でリモートデバイスのファイル情報を取得・操作。
+
 let TextEditor = null;
 const ModeList = AceBuilds.require("ace/ext/modelist");
 
@@ -26,18 +48,29 @@ function loadEditor(callback) {
 	}
 }
 
-let isWindows = false;
-let position = '';
-let fileList = [];
+// isWindows: デバイスの OS (Windows か否か) を判定して、パス区切り文字を切り替える (\\ または /)。
+// position: 現在のディレクトリパス。
+// fileList: 表示中のファイル/フォルダのリスト。
+let isWindows = false; // OS が Windows かどうか
+let position = ''; // 現在のパス
+let fileList = []; // 現在のディレクトリ内のファイルリスト
+
 function FileBrowser(props) {
-	const [path, setPath] = useState(`/`);
-	const [preview, setPreview] = useState('');
-	const [loading, setLoading] = useState(false);
-	const [draggable, setDraggable] = useState(true);
-	const [uploading, setUploading] = useState(false);
-	const [editingFile, setEditingFile] = useState('');
-	const [editingContent, setEditingContent] = useState('');
-	const [selectedRowKeys, setSelectedRowKeys] = useState([]);
+	//コンポーネントの状態管理
+	const [path, setPath] = useState(`/`);  // 現在のディレクトリパス
+	const [preview, setPreview] = useState(''); // プレビュー用画像 URL
+	const [loading, setLoading] = useState(false); // ローディング状態
+	const [draggable, setDraggable] = useState(true); 
+	const [uploading, setUploading] = useState(false); // アップロード中かどうか
+	const [editingFile, setEditingFile] = useState(''); // 編集中のファイル名
+	const [editingContent, setEditingContent] = useState(''); // 編集中のファイル内容
+	const [selectedRowKeys, setSelectedRowKeys] = useState([]); // 選択中のファイル/フォルダ
+	
+	//表示する列の定義
+	//Name: ファイル/フォルダ名。
+	// Size: ファイルサイズ (フォルダには非表示)。
+	// Time: 最終更新日時 (ファイルのみ表示)。
+	// Option: ファイル操作 (ダウンロード、削除など) を行うメニュー。
 	const columns = [
 		{
 			key: 'Name',
@@ -73,6 +106,7 @@ function FileBrowser(props) {
 			render: (_, file) => renderOperation(file)
 		},
 	];
+
 	const options = {
 		show: true,
 		search: true,
@@ -80,13 +114,16 @@ function FileBrowser(props) {
 		density: false,
 		setting: false,
 	};
+
 	const tableRef = useRef();
+
 	const virtualTable = useMemo(() => {
 		return VList({
 			height: 300,
 			vid: 'file-table',
 		})
 	}, []);
+
 	const alertOptionRenderer = () => (<Space size={16}>
 		<Popconfirm
 			title={i18n.t('EXPLORER.DOWNLOAD_MULTI_CONFIRM')}
@@ -101,6 +138,7 @@ function FileBrowser(props) {
 			<a>{i18n.t('EXPLORER.DELETE')}</a>
 		</Popconfirm>
 	</Space>);
+
 	useEffect(() => {
 		if (props.device) {
 			isWindows = props.device.os === 'windows';
@@ -113,13 +151,19 @@ function FileBrowser(props) {
 		}
 	}, [props.device, props.open]);
 
+	//ファイル操作の定義
+	//ファイル操作メニュー
+	//ファイルのダウンロード。
+	// 削除、またはテキストとして編集。
 	function renderOperation(file) {
 		let menus = [
 			{key: 'editAsText', name: i18n.t('EXPLORER.EDIT_AS_TEXT')},
 			{key: 'delete', name: i18n.t('EXPLORER.DELETE')},
 		];
+		// フォルダの場合、テキスト編集は不可
 		if (file.type === 1) {
 			menus.shift();
+		// 親ディレクトリには操作を提供しない
 		} else if (file.type === 2) {
 			return [];
 		}
@@ -208,6 +252,9 @@ function FileBrowser(props) {
 			setLoading(false);
 		});
 	}
+
+	//テキスト編集
+	//サイズが 2MB 以下のテキストファイルを読み込んで編集。
 	function textEdit(file) {
 		// Only edit text file smaller than 2MB.
 		if (file.size > 2 << 20) {
@@ -328,6 +375,11 @@ function FileBrowser(props) {
 			device: props.device.id
 		});
 	}
+
+	// ファイルの削除
+	//処理内容:
+	// 選択されたファイルをサーバーに削除リクエスト。
+	// 成功時にテーブルを再読み込み。
 	function removeFiles(items) {
 		if (path === '/' || path === '\\' || path.length === 0) {
 			if (isWindows) {
@@ -358,6 +410,8 @@ function FileBrowser(props) {
 		});
 	}
 
+	//ファイルリストの取得
+	//サーバーから指定ディレクトリのファイルリストを取得。
 	async function getData(form) {
 		await waitTime(300);
 		let res = await request('/api/device/file/list', {path: position, device: props.device.id});
@@ -507,6 +561,8 @@ function FileBrowser(props) {
 	)
 }
 
+// ナビゲーションバー (Navigator)
+//現在のパスをパンくずリストで表示し、各ディレクトリへの移動をサポート。
 function Navigator(props) {
 	let separator = isWindows ? '\\' : '/';
 	let path = [];
