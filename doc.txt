@@ -8,3 +8,10 @@ server <- client
 
 remote access
 browser -> server -> client
+
+
+
+
+初期画面
+overviewでデータを表示
+generateでURLなどを指定できるが基本的にはOSのみ指定する
