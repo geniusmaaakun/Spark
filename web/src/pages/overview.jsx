@@ -8,6 +8,24 @@ import i18n from "../locale/locale";
 // DO NOT EDIT OR DELETE THIS COPYRIGHT MESSAGE.
 console.log("%c By XZB %c https://github.com/XZB-1248/Spark", 'font-family:"Helvetica Neue",Helvetica,Arial,sans-serif;font-size:64px;color:#00bbee;-webkit-text-fill-color:#00bbee;-webkit-text-stroke:1px#00bbee;', 'font-size:12px;');
 
+
+//システム監視およびリモート管理ツール」 のメインダッシュボード（overview）を実装
+//リモート管理ツールの フロントエンドのダッシュボード として機能する設計
+
+/*
+Ant Design の ProTable を活用し、複数のデバイスの情報をリストアップし、CPU・メモリ・ディスクの使用率やネットワーク情報を監視できます。
+
+また、各デバイスに対して以下の リモート操作 を実行できます：
+
+ターミナルの開閉
+ファイルエクスプローラーの開閉
+プロセスマネージャーの開閉
+リモートデスクトップ
+コマンド実行
+スクリーンショット取得
+ロック、ログオフ、サスペンド、再起動、シャットダウン など
+*/
+
 let ComponentMap = {
 	Generate: null,
 	Explorer: null,
@@ -18,6 +36,13 @@ let ComponentMap = {
 };
 
 function overview(props) {
+	// 	loading：データ取得の状態管理。
+	// execute, desktop, procMgr, explorer, generate, terminal：
+	// 各モーダルの開閉状態を管理。
+	// デバイスのリモート操作に使用。
+	// screenBlob：取得したスクリーンショットのデータ。
+	// dataSource：テーブルに表示するデバイス情報のリスト。
+	// columnsState：テーブルの列の表示設定。
 	const [loading, setLoading] = useState(false);
 	const [execute, setExecute] = useState(false);
 	const [desktop, setDesktop] = useState(false);
@@ -29,6 +54,12 @@ function overview(props) {
 	const [dataSource, setDataSource] = useState([]);
 	const [columnsState, setColumnsState] = useState(getInitColumnsState());
 
+	//デバイス情報のテーブル (ProTable)
+	//hostname: デバイスのホスト名
+	// cpu_usage / ram_usage:
+	// UsageBar を使い、プログレスバーで使用率を視覚的に表示。
+	// option:
+	// 各デバイスに対して可能なリモート操作ボタンを表示。
 	const columns = [
 		{
 			key: 'hostname',
@@ -171,6 +202,7 @@ function overview(props) {
 		}
 	}
 
+	// 3秒ごとにデータを取得
 	useEffect(() => {
 		// auto update is only available when all modal are closed.
 		if (!execute && !desktop && !procMgr && !explorer && !generate && !terminal) {
@@ -181,6 +213,7 @@ function overview(props) {
 		}
 	}, [execute, desktop, procMgr, explorer, generate, terminal]);
 
+	// 列の表示設定の初期化
 	function getInitColumnsState() {
 		let data = localStorage.getItem(`columnsState`);
 		if (data !== null) {
@@ -196,11 +229,14 @@ function overview(props) {
 			return {};
 		}
 	}
+
+	// 列の表示設定の保存
 	function saveColumnsState(stateMap) {
 		setColumnsState(stateMap);
 		localStorage.setItem(`columnsState`, JSON.stringify(stateMap));
 	}
 
+	//CPU・メモリ・ディスクの使用率 
 	function renderCPUStat(cpu) {
 		let { model, usage, cores } = cpu;
 		usage = Math.round(usage * 100) / 100;
@@ -225,6 +261,8 @@ function overview(props) {
 			</div>
 		);
 	}
+
+	//メモリの使用率 (renderRAMStat)
 	function renderRAMStat(info) {
 		let { usage, total, used } = info;
 		usage = Math.round(usage * 100) / 100;
@@ -240,6 +278,8 @@ function overview(props) {
 			</div>
 		);
 	}
+
+	//ディスクの使用率 (renderDiskStat)
 	function renderDiskStat(info) {
 		let { usage, total, used } = info;
 		usage = Math.round(usage * 100) / 100;
@@ -255,6 +295,8 @@ function overview(props) {
 			</div>
 		);
 	}
+
+	//ネットワーク情報の表示 (renderNetworkIO)
 	function renderNetworkIO(device) {
 		// Make unit starts with Kbps.
 		let sent = device.net_sent * 8 / 1024;
@@ -270,6 +312,10 @@ function overview(props) {
 			return (size / Math.pow(k, i)).toFixed(1) + ' ' + units[i];
 		}
 	}
+
+	//各デバイスのリモート操作 (renderOperation)
+	//ターミナルやエクスプローラーを開くボタン
+	// TableDropdown: 他の操作（スクリーンショット、シャットダウン）をドロップダウンで表示。
 	function renderOperation(device) {
 		let menus = [
 			{key: 'execute', name: i18n.t('OVERVIEW.EXECUTE')},
@@ -295,6 +341,10 @@ function overview(props) {
 		]
 	}
 
+	//メニュークリック時の処理 (onMenuClick)
+	//各アクションに対応する状態更新 (hooksMap)
+	// スクリーンショット取得
+	// Modal.confirm(): ユーザーに確認ダイアログを表示（例: シャットダウン時）
 	function onMenuClick(act, value) {
 		const device = value;
 		let hooksMap = {
@@ -347,6 +397,10 @@ function overview(props) {
 		)
 	}
 
+	//デバイス一覧データ取得 (getData)
+	//API /api/device/list からデバイス情報を取得
+	// ホスト名順にソート
+	// データを setDataSource() にセット
 	async function getData(form) {
 		await waitTime(300);
 		let res = await request('/api/device/list');
@@ -476,6 +530,10 @@ function overview(props) {
 		</>
 	);
 }
+
+//CPU・メモリ・ディスクの使用率 (UsageBar)
+//Tooltip: 詳細な使用率情報をホバー時に表示。
+// Progress: Ant Design のプログレスバーを使用して使用率を視覚化。
 function UsageBar(props) {
 	let {usage} = props;
 	usage = usage || 0;

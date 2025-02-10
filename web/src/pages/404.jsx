@@ -1,6 +1,8 @@
 import React from 'react';
 import i18n from "../locale/locale";
 
+// error page
+
 export default function () {
 	// setTimeout(()=>{
 	//     location.href = '#/';
